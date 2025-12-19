@@ -1,0 +1,422 @@
+substitutions:
+  name: zone-controller
+  friendly_name: Heating Zone Controller
+  area: ""
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  area: ${area}
+ # name_add_mac_suffix: true
+  project:
+    name: heating.zone-controller
+    version: 1.0.0
+  on_boot:
+    then:
+      # read the RTC time once when the system boots
+      ds1307.read_time:
+  includes: <nvs_flash.h>
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+
+external_components:
+
+- source:
+    type: local
+    path: custom_components
+
+
+# Enable logging
+logger:
+  level: VERY_VERBOSE
+# Enable Home Assistant API
+api:
+   # password: !secret api_password
+  encryption: 
+    key: !secret api_key
+  homeassistant_services: True
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    id: zone_controller_ota
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Static IP
+  manual_ip:
+    static_ip: 192.168.68.60
+    gateway: 192.168.68.1
+    subnet: 255.255.255.0
+#    dns1: 192.168.1.254
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: !secret ap_ssid
+    password: !secret ap_password
+http_request:
+  id: http_request_data
+  useragent: esphome/sched
+  timeout: 10s
+  verify_ssl: false
+globals:
+  - id: ipInfodata
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+captive_portal:
+
+web_server:
+  port: 80
+#event:
+#   - platform: template #  Base event platform
+ #    id: my_webhook_event  
+    
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true    
+  id: bus_1
+time:
+  - platform: ds1307
+    id: rtc_time
+    # repeated synchronization is not necessary unless the external RTC
+    # is much more accurate than the internal clock
+    update_interval: never
+  - platform: homeassistant
+    # instead try to synchronize via network repeatedly ...
+    on_time_sync:
+      then:
+        # ... and update the RTC when the synchronization was successful
+        ds1307.write_time:
+
+# dashboard_import:
+#  package_import_url: github://ryansch/esphome-config/waveshare-esp32-s3-relay-6ch.yaml
+
+
+
+schedule:
+  id: testschedule
+  name: "Test Schedule"
+  ha_schedule_entity_id: "schedule.test_sche"
+  max_schedule_size: 100
+  schedule_variables:
+    - data_item:
+        - data_item_label: "brightness"
+          data_item_type: "int"
+    - data_item:
+        - data_item_label: "rgb"
+          data_item_type: "float"
+
+
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+
+  - platform: gpio
+    name: "Boot Button"
+    pin:
+      number: 0
+      ignore_strapping_warning: true
+      mode:
+        input: true
+      inverted: true
+    disabled_by_default: true
+    on_press:
+      then:
+        - button.press: restart_button
+
+text_sensor:
+  - platform: version
+    name: "Firmware Version"
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "Connected SSID"
+      entity_category: diagnostic
+    mac_address:
+      name: "Mac Address"
+      entity_category: diagnostic
+
+switch:
+  - platform: gpio
+    pin: GPIO1
+    id: relay1
+    name: Relay 1
+    on_turn_on:
+        - homeassistant.action:
+            action: schedule.get_schedule
+            data:
+              entity_id: schedule.test_sche
+            capture_response: true
+            on_success:
+            - lambda: |-
+                JsonObjectConst next_hour = response["response"]["schedule.test_sche"]["monday"][0];
+              
+                ESP_LOGD("mon", "Monday: %s", std::string(next_hour["from"]).c_str());
+
+#    on_turn_on:
+#      - http_request.post:
+#          url: http://rhome:8123/api/services/schedule/get_schedule?return_response
+#          headers:
+#            Content-Type: application/json
+#            Authorization: !secret ha_token
+#          max_response_buffer_size: 2048
+#          capture_response: true
+#          json:
+#            entity_id: "schedule.lighting"
+#          on_response:
+#            then:
+#              - if:
+#                  condition:
+#                    lambda: return response->status_code == 200;
+#                  then:
+#                    - lambda: |-
+#                        ESP_LOGD("http","Got OK 200");
+#                        ESP_LOGD("RESPONSE", "response_data size [%d]", body.length());
+#                        if(!body.empty()) {
+#                          ESP_LOGD("JSON","About to parse");
+#                          //ESP_LOGD("JSON","last part of body [%d]}", body.substr(body.size() - 100).c_str());
+#                          DynamicJsonDocument doc(2048);
+#                          deserializeJson(doc, body);
+#                          JsonObject service_response_schedule_lighting = doc["service_response"]["schedule.lighting"];
+#
+#                          //for (JsonObject service_response_schedule_lighting_day : service_response["schedule.lighting"].as<JsonArray>()) {
+#                          //   ESP_LOGD("PARSE", "day: [%s]", day.c_str()); 
+#                           for (JsonPair kv : service_response_schedule_lighting) {
+#                                std::string day = kv.key().c_str(); 
+#                                ESP_LOGD("PARSE", "day: [%s]", day.c_str()); 
+#
+#                                for (JsonObject service_response_schedule_lighting_item : service_response_schedule_lighting[day].as<JsonArray>()) {
+#
+#                                    std::string service_response_schedule_lighting_item_start = service_response_schedule_lighting_item["start"];
+#                                    std::string service_response_schedule_lighting_item_end = service_response_schedule_lighting_item["end"];
+#
+#                                    std::string service_response_schedule_lighting_item_brightness = service_response_schedule_lighting_item["data"]["brightness"];
+#                                    std::string service_response_schedule_lighting_item_rgb = service_response_schedule_lighting_item["data"]["rgb"];
+#                                    ESP_LOGD("PARSE", "start: [%s] Stop: [%s] Bright: [%s] RGB: [%s]",service_response_schedule_lighting_item_start.c_str() , service_response_schedule_lighting_item_end.c_str(), service_response_schedule_lighting_item_brightness.c_str(), service_response_schedule_lighting_item_rgb.c_str()); 
+#                                  }
+#                              }
+#                            ESP_LOGD("PARSE", "day: outer for loop"); 
+#                                
+#                           // }
+#                           // JsonPair day = service_response_schedule_lighting_day
+#                            // ESP_LOGD("PARSE", "day: [%s]", day.key().c_str());
+#                            //for (JsonObject service_response_schedule_lighting_day_time : service_response_schedule_lighting_day.as<JsonArray>()){
+#                             // ESP_LOGD("PARSE", "start: [%s]", service_response_schedule_lighting_day_time["start"].as<String>());
+#                            //  ESP_LOGD("PARSE", "end: [%s]", service_response_schedule_lighting_day_time["end"].as<String>());
+#                           // }
+#                           ESP_LOGD("JSON","Finish parse");
+#                          }
+                        
+                      
+#                  else:
+#                    - logger.log:
+#                        format: "Error: Response status: %d, message %s"
+#                        args: [ 'response->status_code', 'body.c_str()' ]
+       
+  - platform: gpio
+    pin: GPIO2
+    id: relay2
+    on_turn_on:
+      - lambda: 'id(testschedule).request_pref_hash();'
+    name: Relay 2
+  - platform: gpio
+    pin: GPIO41
+    id: relay3
+    name: Relay 3
+    on_turn_on:      
+      - lambda: 'id(testschedule).load_schedule_from_pref_();'
+  - platform: gpio
+    pin: GPIO42
+    id: relay4
+    name: Relay 4
+    on_turn_on:      
+      - lambda: 'id(testschedule).save_schedule_to_pref_();'
+  - platform: gpio
+    pin:
+      number: GPIO45
+      ignore_strapping_warning: true
+    id: relay5
+    name: Relay 5
+    on_turn_on: 
+      - lambda: 'id(testschedule).setup_schedule_retrieval_service_();'
+        
+  - platform: gpio
+    pin:
+      number: GPIO46
+      ignore_strapping_warning: true
+    id: relay6
+    name: Relay 6
+    on_turn_on: 
+      - lambda: 'id(testschedule).request_schedule();'
+uart:
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 9600
+  id: modbus_uart
+
+
+# modbus:
+#  id: modbus1
+ # uart_id: modbus_uart
+#  send_wait_time: 1500ms
+#  role: client
+
+#modbus_controller:
+#  - id: mod_sensor_1
+#    address: 0x02
+#    command_throttle: 1000ms
+#    update_interval: 60s
+#    setup_priority: -10
+#    offline_skip_updates: 8
+
+#  - id: mod_sensor_2
+#    address: 0x03
+ #   command_throttle: 1000ms
+#    update_interval: 60s
+#    setup_priority: -10
+#    offline_skip_updates: 8
+    
+
+# buzzer
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: buzzer
+
+
+rtttl:
+  output: buzzer
+  id: rtttl_buzzer
+  gain: 30%
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: rgb_led
+    name: "RGB LED"
+    rgb_order: RGB
+    pin: GPIO38
+    num_leds: 1
+    chipset: WS2812
+
+button:
+  - platform: restart
+    name: "Restart"
+    id: restart_button
+    entity_category: config
+
+  - platform: factory_reset
+    name: "Factory Reset"
+    id: reset
+    entity_category: config
+
+  - platform: safe_mode
+    name: "Safe Mode"
+    internal: false
+    entity_category: config
+
+  - platform: template
+    name: "Trigger Webhook Action"
+    id: webhook_button
+    on_press:
+      then:
+        
+        - logger.log: "Hello World"
+
+  - platform: template
+    name: "Get NVS Stats"
+    id: get_nvs_stats
+    on_press:
+      - lambda: |-
+          
+          nvs_stats_t nvs_stats;
+          esp_err_t err = nvs_get_stats(NULL, &nvs_stats);
+          if (err == ESP_OK) {
+            ESP_LOGI("nvs_stats", "Total entries: %u", nvs_stats.total_entries);
+            ESP_LOGI("nvs_stats", "Used entries: %u", nvs_stats.used_entries);
+            ESP_LOGI("nvs_stats", "Free entries: %u", nvs_stats.free_entries);
+            ESP_LOGI("nvs_stats", "Namespace count: %u", nvs_stats.namespace_count);
+          } else {
+            ESP_LOGE("nvs_stats", "Failed to get NVS stats: %s", esp_err_to_name(err));
+          }
+
+sensor:
+ # - platform: modbus_controller
+#    modbus_controller_id: mod_sensor_1
+#    name: "Zone 1 Temp"
+#   register_type: read
+#    address: 0x0001    ## address of the register inside the Modbus slave device
+#    unit_of_measurement: "°C"
+ #   device_class: "temperature"
+#    value_type: S_WORD
+ #   accuracy_decimals: 0
+#    filters:
+#     - lambda: return x / 10;
+
+
+#  - platform: modbus_controller
+#    modbus_controller_id: mod_sensor_1
+#    name: "Zone 1 Hum"
+#    register_type: read
+#    address: 0x0002    ## address of the register inside the Modbus slave device
+#    unit_of_measurement: "%"
+#    device_class: "humidity"
+#    value_type: U_WORD
+#    accuracy_decimals: 2
+#    filters:
+#      - lambda: return x / 10;
+
+#  - platform: modbus_controller
+#    modbus_controller_id: mod_sensor_2
+#   name: "Zone 2 Temp"
+#    register_type: read
+#    address: 0x0001    ## address of the register inside the Modbus slave device
+#    unit_of_measurement: "°C"
+#    device_class: "temperature"
+#    value_type: S_WORD
+#    accuracy_decimals: 0
+#    filters:
+ #    - lambda: return x / 10;
+
+
+ # - platform: modbus_controller
+ #   modbus_controller_id: mod_sensor_2
+ #   name: "Zone 2 Hum"
+ #   register_type: read
+ #   address: 0x0002    ## address of the register inside the Modbus slave device
+ #   unit_of_measurement: "%"
+ #   device_class: "humidity"
+  #  value_type: U_WORD
+ #   accuracy_decimals: 2
+ #   filters:
+  #    - lambda: return x / 10;
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: diagnostic
+
+  # Reports the WiFi signal strength in %
+  - platform: copy
+    source_id: wifi_signal_db
+    name: "WiFi Strength"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+#dynamic_cron:
+#    - name: Irrigation
+ #     lambda: |-
+#        ESP_LOGD("lambda", "Trigered CRON");
+#        return {true};   
+
