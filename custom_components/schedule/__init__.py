@@ -19,9 +19,10 @@ CONF_ITEM_TYPE = "data_item_type"
 schedule_ns = cg.esphome_ns.namespace("schedule")
 Schedule = schedule_ns.class_("Schedule", cg.Component, cg.EntityBase)
 ITEM_TYPES = {
-    "byte": 0,
-    "int": 1,
-    "float": 2,
+    "uint8_t": 0,
+    "uint16_t": 1,
+    "int32_t": 2,
+    "float": 3,
 }
 
 DATA_ITEM_SCHEMA = cv.Schema(
@@ -52,6 +53,18 @@ CONFIG_SCHEMA = (
     .extend(cv.COMPONENT_SCHEMA)
 )
 
+def process_schedule_variables(config, var):
+    """Process schedule variables and generate dynamic struct definition."""
+    if CONF_SCHEDULE_VARS not in config:
+        return
+    
+    # Create dynamic struct definition
+    for item_list in config[CONF_SCHEDULE_VARS]:
+        for item in item_list[CONF_DATA_ITEM]:
+            cg.add(var.add_data_item(item[CONF_ITEM_LABEL], ITEM_TYPES[item[CONF_ITEM_TYPE]]))
+     
+
+
 async def to_code(config):
     # Instantiate the C++ class
     var = cg.new_Pvariable(config[CONF_ID])
@@ -60,4 +73,6 @@ async def to_code(config):
     # Pass the size to the C++ component using a setter method
     cg.add_build_flag(f'-DSCHEDULE_COMPONENT_MAX_SIZE={config[CONF_MAX_SCHEDULE_SIZE]}')
     cg.add(var.set_max_schedule_size(config[CONF_MAX_SCHEDULE_SIZE]))
+    process_schedule_variables(config, var)
+
     await  cg.register_component(var, config)

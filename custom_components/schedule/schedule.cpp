@@ -322,6 +322,33 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
    save_schedule_to_pref_(); 
 
 }
+void Schedule::add_data_item(const std::string &label, uint16_t value) {
+    uint16_t size;
+    switch (value) {
+        case 0:  // uint8_t
+            size = 1*SCHEDULE_MAX_SIZE;
+            break;
+        case 1:  // uint16_t
+            size = 2*SCHEDULE_MAX_SIZE;
+            break;
+
+        case 2:  // int32_t
+            size = 4*SCHEDULE_MAX_SIZE;
+            break;
+        case 3:  // float
+            size = 4*SCHEDULE_MAX_SIZE;
+            break;
+        default:
+            size = 0;
+            break;
+    }
+    data_items_.emplace_back(DataItem{label, value, size});
+    }
+void Schedule::print_data_items() {
+        for (const auto& item : data_items_) {
+            ESP_LOGI(TAG, "Data Item - Label: %s, Value: %u, Size: %u", item.label.c_str(), item.value, item.size);
+        }
+    }
 
 } // namespace schedule
 } // namespace esphome

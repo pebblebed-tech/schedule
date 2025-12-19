@@ -107,11 +107,17 @@ schedule:
   max_schedule_size: 100
   schedule_variables:
     - data_item:
-        - data_item_label: "brightness"
-          data_item_type: "int"
+        data_item_label: "red"
+        data_item_type: "uint8_t"
     - data_item:
-        - data_item_label: "rgb"
-          data_item_type: "float"
+        data_item_label: "position"
+        data_item_type: "uint16_t"
+    - data_item:
+        data_item_label: "brightness"
+        data_item_type: "int32_t"
+    - data_item:
+        data_item_label: "temperature"
+        data_item_type: "float"
 
 
 
@@ -227,7 +233,7 @@ switch:
     pin: GPIO2
     id: relay2
     on_turn_on:
-      - lambda: 'id(testschedule).request_pref_hash();'
+      - lambda: 'id(testschedule).print_data_items();'
     name: Relay 2
   - platform: gpio
     pin: GPIO41

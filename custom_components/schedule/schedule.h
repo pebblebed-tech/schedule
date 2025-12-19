@@ -17,6 +17,11 @@ constexpr std::size_t SCHEDULE_MAX_SIZE = static_cast<std::size_t>(SCHEDULE_COMP
 
 class Schedule : public EntityBase, public Component  {
  public:
+  struct DataItem {
+    std::string label;
+    uint16_t value;
+    uint16_t size;
+    };
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -32,10 +37,19 @@ class Schedule : public EntityBase, public Component  {
     ESP_LOGI("*****************", "Preference Hash: %u", this->get_preference_hash());
   }
    void process_schedule_(const JsonObjectConst &response); 
+
+ 
+   
+  void add_data_item(const std::string &label, uint16_t value);
+  const std::vector<DataItem>& get_data_items() const {
+        return data_items_;
+    }
+  void print_data_items();
+ 
  private:
   uint16_t  timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
- 
+
  
 
   size_t schedule_max_size_{0};
@@ -45,10 +59,11 @@ class Schedule : public EntityBase, public Component  {
     uint16_t count;
     uint16_t values[SCHEDULE_MAX_SIZE * 2];
   } __attribute__((packed));
-
+  
   std::vector<uint16_t> schedule_times_in_minutes_; // Use std::vector for runtime sizing
   std::vector<uint16_t> factory_reset_values_= {0xFFFF,0xFFFF}; // Set the MSB to denote end of schedule
   std::string ha_schedule_entity_id_;
+  std::vector<DataItem> data_items_;
 protected:
   ESPPreferenceObject schedule_pref_;
 
