@@ -6,6 +6,7 @@
 #include "esphome/core/preferences.h"
 #include "esphome/components/api/homeassistant_service.h"
 #include "esphome/components/json/json_util.h"
+#include "data_sensor.h"
 #include <vector>
 #include <string>
 
@@ -45,7 +46,10 @@ class Schedule : public EntityBase, public Component  {
         return data_items_;
     }
   void print_data_items();
- 
+  void register_data_sensor(DataSensor *sensor) {
+  this->data_sensors_.push_back(sensor);
+}
+
  private:
   uint16_t  timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
@@ -64,6 +68,7 @@ class Schedule : public EntityBase, public Component  {
   std::vector<uint16_t> factory_reset_values_= {0xFFFF,0xFFFF}; // Set the MSB to denote end of schedule
   std::string ha_schedule_entity_id_;
   std::vector<DataItem> data_items_;
+  std::vector<DataSensor *> data_sensors_;
 protected:
   ESPPreferenceObject schedule_pref_;
 

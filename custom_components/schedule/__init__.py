@@ -18,6 +18,7 @@ CONF_ITEM_TYPE = "data_item_type"
 # Define the namespace and the C++ class name
 schedule_ns = cg.esphome_ns.namespace("schedule")
 Schedule = schedule_ns.class_("Schedule", cg.Component, cg.EntityBase)
+DataSensor = schedule_ns.class_("DataSensor", sensor.Sensor, cg.Component)
 ITEM_TYPES = {
     "uint8_t": 0,
     "uint16_t": 1,
@@ -58,10 +59,18 @@ def process_schedule_variables(config, var):
     if CONF_SCHEDULE_VARS not in config:
         return
     
-    # Create dynamic struct definition
+    # Create dynamic struct definition and DataSensor instances
     for item_list in config[CONF_SCHEDULE_VARS]:
         for item in item_list[CONF_DATA_ITEM]:
+            # Add data item to the schedule component
             cg.add(var.add_data_item(item[CONF_ITEM_LABEL], ITEM_TYPES[item[CONF_ITEM_TYPE]]))
+            
+            # Create a DataSensor instance with custom constructor
+            data_sensor = cg.new_Pvariable(
+                cg.RawExpression(f'new schedule::DataSensor("{item[CONF_ITEM_LABEL]}", {ITEM_TYPES[item[CONF_ITEM_TYPE]]})')
+            )
+            # You can register it with the parent schedule component if needed
+            cg.add(var.register_data_sensor(data_sensor))
      
 
 
