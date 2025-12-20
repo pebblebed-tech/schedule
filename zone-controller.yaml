@@ -106,19 +106,22 @@ schedule:
   ha_schedule_entity_id: "schedule.test_sche"
   max_schedule_size: 100
   schedule_variables:
-    - data_item:
-        data_item_label: "red"
-        data_item_type: "uint8_t"
-    - data_item:
-        data_item_label: "position"
-        data_item_type: "uint16_t"
-    - data_item:
-        data_item_label: "brightness"
-        data_item_type: "int32_t"
-    - data_item:
-        data_item_label: "temperature"
-        data_item_type: "float"
-
+    - id: temp_sensor
+      label: "temp"
+      item_type: float
+      name: "Schedule Temperature"
+#    - id: mode_sensor
+#      label: "mode"
+#      item_type: uint8_t
+#      name: "Schedule Mode"
+#   - id: position_sensor
+#      label: "position"
+#      item_type: uint16_t
+#      name: "Schedule Position"
+#    - id: humidity_sensor
+#      label: "humidity"
+#      item_type: int32_t
+#      name: "Schedule Humidity"
 
 
 binary_sensor:
@@ -254,7 +257,7 @@ switch:
     id: relay5
     name: Relay 5
     on_turn_on: 
-      - lambda: 'id(testschedule).setup_schedule_retrieval_service_();'
+      - lambda: 'id(testschedule).log_schedule_data();'
         
   - platform: gpio
     pin:
