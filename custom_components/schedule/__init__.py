@@ -60,8 +60,10 @@ async def to_code(config):
     cg.add(var.set_schedule_entity_id(config[CONF_HA_SCHEDULE_ENTITY_ID]))
     # Pass the size to the C++ component using a setter method
     cg.add_build_flag(f'-DSCHEDULE_COMPONENT_MAX_SIZE={config[CONF_MAX_SCHEDULE_SIZE]}')
-    cg.add(var.set_max_schedule_size(config[CONF_MAX_SCHEDULE_SIZE]))
-    
+    cg.add(var.set_max_schedule_entries(config[CONF_MAX_SCHEDULE_SIZE]))
+    cg.add(var.set_name(config[CONF_NAME] if CONF_NAME in config else "*schedule*"))
+    cg.add(var.set_object_id(config[CONF_ID].id))
+   # cg.add(var.set_comp_id(config[CONF_ID].id))
     # Process schedule variables
     if CONF_SCHEDULE_VARS in config:
         for sensor_config in config[CONF_SCHEDULE_VARS]:
@@ -75,7 +77,7 @@ async def to_code(config):
             # Set the label and item type
             cg.add(sens.set_label(label))
             cg.add(sens.set_item_type(item_type))
-            cg.add(sens.set_max_schedule_size(config[CONF_MAX_SCHEDULE_SIZE]))
+            cg.add(sens.set_max_schedule_data_entries(config[CONF_MAX_SCHEDULE_SIZE]))
             
             # Add data item to schedule component
             cg.add(var.add_data_item(label, item_type))

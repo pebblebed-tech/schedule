@@ -17,20 +17,27 @@ namespace schedule {
 // Convert macro into a compile-time constant
 constexpr std::size_t SCHEDULE_MAX_SIZE = static_cast<std::size_t>(SCHEDULE_COMPONENT_MAX_SIZE);
 
+// Forward declaration
+class Schedule;
+
 // DataSensor class
 class DataSensor : public sensor::Sensor {
  public:
   DataSensor() = default;
 
+  // Setup method to handle initialization and preference loading
+  void setup();
+
   // Setters
   void set_label(const std::string &label) { this->label_ = label; }
   void set_item_type(uint16_t item_type) { this->item_type_ = item_type; }
-  void set_max_schedule_size(uint16_t size);
+  void set_max_schedule_data_entries(uint16_t size);
+  void set_parent_schedule(Schedule *parent) { this->parent_schedule_ = parent; }
 
   // Getters
   const std::string &get_label() const { return label_; }
   uint16_t get_item_type() const { return item_type_; }
-  uint16_t get_max_schedule_size() const { return max_schedule_size_; }
+  uint16_t get_max_schedule_data_entries() const { return max_schedule_entries_; }
   std::vector<uint8_t>& get_data_vector() { return data_vector_; }
   const std::vector<uint8_t>& get_data_vector() const { return data_vector_; }
 
@@ -47,15 +54,29 @@ class DataSensor : public sensor::Sensor {
 
   // Get value from data vector at index, convert to float and publish
   void get_and_publish_sensor_value(size_t index);
-// Helper function to get bytes for each type
-  uint16_t get_bytes_for_type(uint16_t type) const;
- protected:
   
+  // Helper function to get bytes for each type
+  uint16_t get_bytes_for_type(uint16_t type) const;
 
+  // Preference management
+  void load_data_from_pref_();
+  void save_data_to_pref_();
+  uint32_t get_data_preference_hash() const;
+
+ protected:
   std::string label_;
   uint16_t item_type_{0};
-  uint16_t max_schedule_size_{0};
+  uint16_t max_schedule_entries_{0};
   std::vector<uint8_t> data_vector_;
+  Schedule *parent_schedule_{nullptr};
+  ESPPreferenceObject data_pref_;
+  
+  // Fixed-size POD structure for persistence
+  // Maximum size is for float/int32_t: SCHEDULE_MAX_SIZE * 4 bytes
+  struct DataPrefBlob {
+    uint16_t count;  // Number of bytes actually stored
+    uint8_t data[SCHEDULE_MAX_SIZE * 4];  // Max possible: 4 bytes per entry
+  } __attribute__((packed));
 };
 
 // Schedule class
@@ -72,6 +93,7 @@ class Schedule : public EntityBase, public Component  {
   float get_setup_priority() const override { return esphome::setup_priority::LATE; }
   void set_schedule_entity_id(const std::string &ha_schedule_entity_id);
   void set_max_schedule_size(size_t size);
+  void set_max_schedule_entries(size_t entries);
    /// Trigger a schedule.get_schedule request.
   void request_schedule();
    void load_schedule_from_pref_();
@@ -83,8 +105,6 @@ class Schedule : public EntityBase, public Component  {
   void process_schedule_(const JsonObjectConst &response); 
    // Log schedule data for debugging
   void log_schedule_data();
-
- 
    
   void add_data_item(const std::string &label, uint16_t value);
   const std::vector<DataItem>& get_data_items() const {
@@ -98,10 +118,11 @@ class Schedule : public EntityBase, public Component  {
  private:
   uint16_t  timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
-
+  
  
 
   size_t schedule_max_size_{0};
+  size_t schedule_max_entries_{0};
 
     // Fixed-size POD structure for persistence (trivially copyable)
   struct PrefBlob {
