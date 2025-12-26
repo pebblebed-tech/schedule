@@ -14,9 +14,6 @@
 namespace esphome {
 namespace schedule {
 
-// Convert macro into a compile-time constant
-constexpr std::size_t SCHEDULE_MAX_SIZE = static_cast<std::size_t>(SCHEDULE_COMPONENT_MAX_SIZE);
-
 // Forward declaration
 class Schedule;
 
@@ -27,6 +24,8 @@ class DataSensor : public sensor::Sensor {
 
   // Setup method to handle initialization and preference loading
   void setup();
+  // Dump configuration for debugging
+  void dump_config();
 
   // Setters
   void set_label(const std::string &label) { this->label_ = label; }
@@ -57,7 +56,8 @@ class DataSensor : public sensor::Sensor {
   
   // Helper function to get bytes for each type
   uint16_t get_bytes_for_type(uint16_t type) const;
-
+  // Log sensor data for debugging
+  void log_data_sensor(std::string prefix );
   // Preference management
   void load_data_from_pref_();
   void save_data_to_pref_();
@@ -71,12 +71,9 @@ class DataSensor : public sensor::Sensor {
   Schedule *parent_schedule_{nullptr};
   ESPPreferenceObject data_pref_;
   
-  // Fixed-size POD structure for persistence
-  // Maximum size is for float/int32_t: SCHEDULE_MAX_SIZE * 4 bytes
-  struct DataPrefBlob {
-    uint16_t count;  // Number of bytes actually stored
-    uint8_t data[SCHEDULE_MAX_SIZE * 4];  // Max possible: 4 bytes per entry
-  } __attribute__((packed));
+  // Helper function to create preference object
+  void create_preference_();
+
 };
 
 // Schedule class
@@ -119,16 +116,8 @@ class Schedule : public EntityBase, public Component  {
   uint16_t  timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
   
- 
-
   size_t schedule_max_size_{0};
   size_t schedule_max_entries_{0};
-
-    // Fixed-size POD structure for persistence (trivially copyable)
-  struct PrefBlob {
-    uint16_t count;
-    uint16_t values[SCHEDULE_MAX_SIZE * 2];
-  } __attribute__((packed));
   
   std::vector<uint16_t> schedule_times_in_minutes_; // Use std::vector for runtime sizing
   std::vector<uint16_t> factory_reset_values_= {0xFFFF,0xFFFF}; // Set the MSB to denote end of schedule
@@ -136,12 +125,26 @@ class Schedule : public EntityBase, public Component  {
   std::vector<DataItem> data_items_;
   std::vector<DataSensor *> data_sensors_;
 protected:
+
   ESPPreferenceObject schedule_pref_;
 
-    // Action object that sends the HA service call.
+  // Action object that sends the HA service call.
   esphome::api::HomeAssistantServiceCallAction<> *ha_get_schedule_action_{nullptr};
+  
+  // Action object for sending notifications to Home Assistant
+  esphome::api::HomeAssistantServiceCallAction<> *ha_notify_action_{nullptr};
 
+  // Containers to own the automations/actions so they remain alive
+  std::vector<std::unique_ptr<esphome::Automation<JsonObjectConst>>> ha_json_automations_;
+  std::vector<std::unique_ptr<esphome::Action<JsonObjectConst>>> ha_json_actions_;
+  std::vector<std::unique_ptr<esphome::Automation<std::string>>> ha_str_automations_;
+  std::vector<std::unique_ptr<esphome::Action<std::string>>> ha_str_actions_;
 
+ private:
+  // Setup notification service
+  void setup_notification_service_();
+  // Send notification to Home Assistant
+  void send_ha_notification_(const std::string &message, const std::string &title);
 };
 
 } // namespace schedule

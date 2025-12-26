@@ -18,7 +18,7 @@ esphome:
   includes: <nvs_flash.h>
 esp32:
   variant: esp32s3
-  flash_size: 16MB
+  flash_size: 8MB
   framework:
     type: esp-idf
     version: recommended
@@ -110,6 +110,8 @@ schedule:
       label: "temp"
       item_type: float
       name: "Schedule Temperature"
+
+
 #    - id: mode_sensor
 #      label: "mode"
 #      item_type: uint8_t
@@ -357,6 +359,7 @@ button:
           } else {
             ESP_LOGE("nvs_stats", "Failed to get NVS stats: %s", esp_err_to_name(err));
           }
+
 
 sensor:
  # - platform: modbus_controller

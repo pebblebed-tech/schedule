@@ -59,7 +59,7 @@ async def to_code(config):
     # Pass the entity_id from YAML config into the C++ instance
     cg.add(var.set_schedule_entity_id(config[CONF_HA_SCHEDULE_ENTITY_ID]))
     # Pass the size to the C++ component using a setter method
-    cg.add_build_flag(f'-DSCHEDULE_COMPONENT_MAX_SIZE={config[CONF_MAX_SCHEDULE_SIZE]}')
+    #cg.add_build_flag(f'-DSCHEDULE_COMPONENT_MAX_SIZE={config[CONF_MAX_SCHEDULE_SIZE]}')
     cg.add(var.set_max_schedule_entries(config[CONF_MAX_SCHEDULE_SIZE]))
     cg.add(var.set_name(config[CONF_NAME] if CONF_NAME in config else "*schedule*"))
     cg.add(var.set_object_id(config[CONF_ID].id))
@@ -83,5 +83,14 @@ async def to_code(config):
             cg.add(var.add_data_item(label, item_type))
             # Register sensor with schedule component
             cg.add(var.register_data_sensor(sens))
+
+    # Setup preference test component if configured
+    # if CONF_PREFERENCE_TEST in config:
+    #     test_conf = config[CONF_PREFERENCE_TEST]
+    #     test_size = test_conf[CONF_TEST_BUFFER_SIZE]  # Gets value from YAML (e.g., 100)
+    #     template_args = cg.TemplateArguments(test_size)
+    #     test_var = cg.new_Pvariable(test_conf[CONF_ID], template_args)
+    #     await cg.register_component(test_var, test_conf)
+        
 
     await cg.register_component(var, config)
