@@ -1,26 +1,34 @@
+from logging import config
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome.components import button
 from esphome.const import (
     CONF_ID,
-    CONF_NAME
+    CONF_NAME,
+
 )
 from esphome.components import sensor
 
-# Define a configuration key for the array size
-CONF_MAX_SCHEDULE_SIZE = "max_schedule_size"
+
 
 CODEOWNERS = ["@pebblebed-tech"]
 DEPENDENCIES = ["api"]
 
+# Define a configuration key for the array size
+CONF_MAX_SCHEDULE_SIZE = "max_schedule_size"
 CONF_HA_SCHEDULE_ENTITY_ID = "ha_schedule_entity_id"
 CONF_SCHEDULE_VARS = "schedule_variables"
 CONF_ITEM_LABEL = "label"
 CONF_ITEM_TYPE = "item_type"
 
+
 # Define the namespace and the C++ class name
 schedule_ns = cg.esphome_ns.namespace("schedule")
 Schedule = schedule_ns.class_("Schedule", cg.Component, cg.EntityBase)
 DataSensor = schedule_ns.class_("DataSensor", sensor.Sensor)
+ArrayPreference = schedule_ns.class_("ArrayPreference", cg.Component)
+
+
 
 ITEM_TYPES = {
     "uint8_t": 0,
@@ -48,6 +56,7 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_HA_SCHEDULE_ENTITY_ID): cv.string,
             cv.Optional(CONF_MAX_SCHEDULE_SIZE, default=21): cv.int_,
             cv.Optional(CONF_SCHEDULE_VARS): cv.ensure_list(DATA_SENSOR_SCHEMA),
+            
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -58,12 +67,15 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     # Pass the entity_id from YAML config into the C++ instance
     cg.add(var.set_schedule_entity_id(config[CONF_HA_SCHEDULE_ENTITY_ID]))
-    # Pass the size to the C++ component using a setter method
-    #cg.add_build_flag(f'-DSCHEDULE_COMPONENT_MAX_SIZE={config[CONF_MAX_SCHEDULE_SIZE]}')
+
     cg.add(var.set_max_schedule_entries(config[CONF_MAX_SCHEDULE_SIZE]))
     cg.add(var.set_name(config[CONF_NAME] if CONF_NAME in config else "*schedule*"))
     cg.add(var.set_object_id(config[CONF_ID].id))
-   # cg.add(var.set_comp_id(config[CONF_ID].id))
+
+    size = config[CONF_MAX_SCHEDULE_SIZE]
+    # Create a NEW ID object for the child 
+    array_pref = cg.RawExpression(f'new esphome::schedule::ArrayPreference<{size}>()')
+    cg.add(var.sched_add_pref(array_pref))
     # Process schedule variables
     if CONF_SCHEDULE_VARS in config:
         for sensor_config in config[CONF_SCHEDULE_VARS]:
@@ -84,13 +96,7 @@ async def to_code(config):
             # Register sensor with schedule component
             cg.add(var.register_data_sensor(sens))
 
-    # Setup preference test component if configured
-    # if CONF_PREFERENCE_TEST in config:
-    #     test_conf = config[CONF_PREFERENCE_TEST]
-    #     test_size = test_conf[CONF_TEST_BUFFER_SIZE]  # Gets value from YAML (e.g., 100)
-    #     template_args = cg.TemplateArguments(test_size)
-    #     test_var = cg.new_Pvariable(test_conf[CONF_ID], template_args)
-    #     await cg.register_component(test_var, test_conf)
+
         
 
     await cg.register_component(var, config)

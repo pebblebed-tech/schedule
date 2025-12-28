@@ -110,6 +110,8 @@ schedule:
       label: "temp"
       item_type: float
       name: "Schedule Temperature"
+      
+
 
 
 #    - id: mode_sensor
@@ -359,7 +361,28 @@ button:
           } else {
             ESP_LOGE("nvs_stats", "Failed to get NVS stats: %s", esp_err_to_name(err));
           }
+# Test buttons that call the template class methods
 
+  - platform: template
+    name: "Test Create Preference"
+    icon: "mdi:database-plus"
+    on_press:
+      - lambda: |-
+          id(testschedule)->test_create_preference();
+  
+  - platform: template
+    name: "Test Save Preference"
+    icon: "mdi:content-save"
+    on_press:
+      - lambda: |-
+          id(testschedule)->test_save_preference();
+  
+  - platform: template
+    name: "Test Load Preference"
+    icon: "mdi:download"
+    on_press:
+      - lambda: |-
+          id(testschedule)->test_load_preference();
 
 sensor:
  # - platform: modbus_controller
@@ -431,4 +454,3 @@ sensor:
  #     lambda: |-
 #        ESP_LOGD("lambda", "Trigered CRON");
 #        return {true};   
-

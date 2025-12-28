@@ -67,7 +67,6 @@ class MyErrorTrigger : public Trigger<std::string> {
 
 
 
-
 // DataSensor implementations
 
 void DataSensor::setup() {
@@ -355,10 +354,10 @@ void Schedule::setup() {
     ESP_LOGI(TAG, "Creating schedule preference: hash=0x%08X, size=%zu bytes (%zu uint16_t values)",
              pref_hash, pref_size_bytes, this->schedule_max_size_);
     
-    this->schedule_pref_ = global_preferences->make_preference((size_t)pref_size_bytes,(uint32_t)pref_hash,true);
+    //this->schedule_pref_ = global_preferences->make_preference((size_t)pref_size_bytes,(uint32_t)pref_hash,true);
     
     // Now load from preference
-    this->load_schedule_from_pref_();
+   // this->load_schedule_from_pref_();
     this->setup_schedule_retrieval_service_();
     this->setup_notification_service_();
 }
@@ -943,8 +942,66 @@ void Schedule::log_schedule_data() {
         "Schedule Warning"
     );
 }
-// Test method 1: Create a test preference
-// Test method 1: Create a test preference
+
+
+void Schedule::sched_add_pref(ArrayPreferenceBase *array_pref) {
+  sched_array_pref_ = array_pref;
 
 }
+
+
+
+
+// --------------------------------------------------
+// TEST 1: Create preference
+// --------------------------------------------------
+void Schedule::test_create_preference() {
+  if (!sched_array_pref_) return;
+
+
+  sched_array_pref_->create_preference(this->get_object_id_hash());
+
+  ESP_LOGI(TAG, "test_create_preference: key=0x%08X", this->get_object_id_hash());
+}
+
+// --------------------------------------------------
+// TEST 2: Save preference (write bytes 0..99)
+// --------------------------------------------------
+void Schedule::test_save_preference() {
+  if (!sched_array_pref_) return;
+
+  uint8_t *buf = sched_array_pref_->data();
+  size_t limit = schedule_max_size_ < 100 ? schedule_max_size_ : 100;
+
+  for (size_t i = 0; i < limit; i++) {
+    buf[i] = static_cast<uint8_t>(i);
+  }
+
+  sched_array_pref_->save();
+  ESP_LOGI(TAG, "test_save_preference: wrote %u bytes", (unsigned)limit);
+}
+
+// --------------------------------------------------
+// TEST 3: Load preference and log bytes
+// --------------------------------------------------
+void Schedule::test_load_preference() {
+  if (!sched_array_pref_) return;
+
+  sched_array_pref_->load();
+  uint8_t *buf = sched_array_pref_->data();
+
+  ESP_LOGI(TAG, "test_load_preference: bytes 0..9:");
+  for (size_t i = 0; i < 10 && i < this->schedule_max_size_; i++) {
+    ESP_LOGI(TAG, "  [%u] = %u", (unsigned)i, buf[i]);
+  }
+
+  ESP_LOGI(TAG, "test_load_preference: bytes 90..99:");
+  for (size_t i = 90; i < 100 && i < this->schedule_max_size_; i++) {
+    ESP_LOGI(TAG, "  [%u] = %u", (unsigned)i, buf[i]);
+  }
+}
+
+
+
+} // namespace schedule
 } // namespace esphome

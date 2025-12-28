@@ -10,12 +10,14 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include "array_preference.h"
 
 namespace esphome {
 namespace schedule {
 
 // Forward declaration
 class Schedule;
+
 
 // DataSensor class
 class DataSensor : public sensor::Sensor {
@@ -111,11 +113,18 @@ class Schedule : public EntityBase, public Component  {
   void register_data_sensor(DataSensor *sensor) {
     this->data_sensors_.push_back(sensor);
   }
+  
+  void sched_add_pref(ArrayPreferenceBase *array_pref);
+
+  // Test methods for debugging preference storage
+  void test_create_preference();
+  void test_save_preference();
+  void test_load_preference();
 
  private:
   uint16_t  timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
-  
+  ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
   size_t schedule_max_entries_{0};
   
@@ -127,6 +136,7 @@ class Schedule : public EntityBase, public Component  {
 protected:
 
   ESPPreferenceObject schedule_pref_;
+  ESPPreferenceObject test_pref_;
 
   // Action object that sends the HA service call.
   esphome::api::HomeAssistantServiceCallAction<> *ha_get_schedule_action_{nullptr};
