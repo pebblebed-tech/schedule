@@ -240,7 +240,7 @@ switch:
     pin: GPIO2
     id: relay2
     on_turn_on:
-      - lambda: 'id(testschedule).print_data_items();'
+      - lambda: 'id(testschedule).create_schedule_preference();'
     name: Relay 2
   - platform: gpio
     pin: GPIO41

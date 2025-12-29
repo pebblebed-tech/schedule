@@ -37,6 +37,14 @@ ITEM_TYPES = {
     "float": 3,
 }
 
+# Map item types to their byte sizes
+ITEM_TYPE_BYTES = {
+    0: 1,  # uint8_t
+    1: 2,  # uint16_t
+    2: 4,  # int32_t
+    3: 4,  # float
+}
+
 # Schema for individual data sensor
 DATA_SENSOR_SCHEMA = sensor.sensor_schema(
     DataSensor,
@@ -72,7 +80,7 @@ async def to_code(config):
     cg.add(var.set_name(config[CONF_NAME] if CONF_NAME in config else "*schedule*"))
     cg.add(var.set_object_id(config[CONF_ID].id))
 
-    size = config[CONF_MAX_SCHEDULE_SIZE]
+    size = (config[CONF_MAX_SCHEDULE_SIZE] * 2 * 2) + 4  # Each entry has a start and end time so actual size is double and is 16bit so *2, plus 4 for terminators
     # Create a NEW ID object for the child 
     array_pref = cg.RawExpression(f'new esphome::schedule::ArrayPreference<{size}>()')
     cg.add(var.sched_add_pref(array_pref))
@@ -82,6 +90,13 @@ async def to_code(config):
             label = sensor_config[CONF_ITEM_LABEL]
             item_type = ITEM_TYPES[sensor_config[CONF_ITEM_TYPE]]
             
+            # Calculate bytes needed for this sensor's data
+            bytes_per_item = ITEM_TYPE_BYTES[item_type]
+            total_bytes = config[CONF_MAX_SCHEDULE_SIZE] * bytes_per_item
+            
+            # Create ArrayPreference for this sensor's data
+            sensor_array_pref = cg.RawExpression(f'new esphome::schedule::ArrayPreference<{total_bytes}>()')
+            
             # Create DataSensor
             sens = cg.new_Pvariable(sensor_config[CONF_ID])
             await sensor.register_sensor(sens, sensor_config)
@@ -90,6 +105,7 @@ async def to_code(config):
             cg.add(sens.set_label(label))
             cg.add(sens.set_item_type(item_type))
             cg.add(sens.set_max_schedule_data_entries(config[CONF_MAX_SCHEDULE_SIZE]))
+            cg.add(sens.set_array_preference(sensor_array_pref))
             
             # Add data item to schedule component
             cg.add(var.add_data_item(label, item_type))

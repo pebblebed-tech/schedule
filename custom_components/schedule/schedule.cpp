@@ -11,7 +11,8 @@
 #include <functional>
 
 
-// TODO: Make the HomeAssistantServiceCallAction response handling trigger persitent across calls
+// TODO: Clean up data sensor code
+// TODO: Clean up schedule code
 // TODO: Add error handling for service call failures
 // TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
 // TODO: Add a timer to check to and from times and set a switch and the data_sensors if time is within a scheduled period
@@ -78,45 +79,40 @@ void DataSensor::setup() {
     return;
   }
   
-  // Calculate bytes needed and resize vector
+  // Ensure array_pref_ is set
+  if (this->array_pref_ == nullptr) {
+    ESP_LOGE(TAG_DATA_SENSOR, "array_pref not set for sensor '%s'", this->get_label().c_str());
+    return;
+  }
+  
+  // Calculate bytes needed and resize local vector
   uint16_t bytes_per_item = get_bytes_for_type(this->item_type_);
   size_t total_bytes = this->max_schedule_entries_ * bytes_per_item;
   this->data_vector_.resize(total_bytes);
-  // Fill the vector with zeros 
-    for (size_t i = 0; i < this->data_vector_.size(); ++i) {
-      this->data_vector_[i] = 0;
-    }
-  // Create preference object ONCE
-  this->create_preference_();
+  std::fill(this->data_vector_.begin(), this->data_vector_.end(), 0);
   
-  // Load data from preferences
- // this->load_data_from_pref_();
+  // Create preference and load data from persistent storage into local vector
+  this->create_preference();
+  this->load_data_from_pref_();
+  
+  ESP_LOGI(TAG_DATA_SENSOR, "DataSensor '%s' setup complete: %u bytes local storage, %u bytes persistent storage",
+           this->get_label().c_str(), 
+           static_cast<unsigned>(this->data_vector_.size()),
+           static_cast<unsigned>(this->array_pref_->size()));
 }
 void DataSensor::dump_config() {
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "DataSensor '%s': label='%s', item_type=%u, max_schedule_entries=%u, data_vector_size=%u bytes", 
+  size_t array_size = this->array_pref_ ? this->array_pref_->size() : 0;
+  ESP_LOGCONFIG(TAG_DATA_SENSOR, "DataSensor '%s': label='%s', item_type=%u, max_schedule_entries=%u, data_vector_size=%u bytes, array_pref_size=%u bytes", 
            this->get_object_id().c_str(),
            this->get_label().c_str(),
            this->item_type_,
            static_cast<unsigned>(this->max_schedule_entries_),
-           static_cast<unsigned>(this->data_vector_.size()));
+           static_cast<unsigned>(this->data_vector_.size()),
+           static_cast<unsigned>(array_size));
 }
-void DataSensor::create_preference_() {
-  uint32_t pref_hash = this->get_data_preference_hash();
-  size_t actual_size = this->data_vector_.size();
-  
-  ESP_LOGD(TAG_DATA_SENSOR, "Creating preference for '%s': hash=0x%08X, size=%u bytes", 
-           this->get_label().c_str(), pref_hash, static_cast<unsigned>(actual_size));
-  
-  // Create preference with exact size needed
-  this->data_pref_ = global_preferences->make_preference(actual_size, pref_hash);
-}
-
 void DataSensor::set_max_schedule_data_entries(uint16_t size) {
   this->max_schedule_entries_ = size;
-  // Calculate bytes needed based on item_type and resize vector
-  uint16_t bytes_per_item = get_bytes_for_type(this->item_type_);
-  this->data_vector_.resize(this->max_schedule_entries_ * bytes_per_item);
-  ESP_LOGD(TAG, "Sensor %s has a size of %u ",this->get_object_id().c_str(), this->data_vector_.size());
+  ESP_LOGD(TAG, "Sensor %s set to %u entries",this->get_object_id().c_str(), this->max_schedule_entries_);
 }
 
 uint16_t DataSensor::get_bytes_for_type(uint16_t type) const {
@@ -229,6 +225,7 @@ void DataSensor::add_schedule_data_to_sensor(const std::string &value_str, size_
   }
 }
 
+
 void DataSensor::get_and_publish_sensor_value(size_t index) {
   // Calculate bytes per item and actual vector index
   uint16_t bytes_per_item = get_bytes_for_type(this->item_type_);
@@ -277,9 +274,8 @@ void DataSensor::get_and_publish_sensor_value(size_t index) {
            value_as_float, static_cast<unsigned>(index), this->get_label().c_str());
 }
 
-uint32_t DataSensor::get_data_preference_hash() const {
+uint32_t DataSensor::get_preference_hash() const {
   // Create a unique hash based on parent schedule's object ID and this sensor's label
-  // This ensures each sensor has its own preference storage
   if (this->parent_schedule_ != nullptr) {
     uint32_t parent_hash = this->parent_schedule_->get_object_id_hash();
     uint32_t label_hash = fnv1_hash(this->label_);
@@ -289,42 +285,63 @@ uint32_t DataSensor::get_data_preference_hash() const {
   return fnv1_hash(this->label_);
 }
 
+void DataSensor::create_preference() {
+  if (this->array_pref_ == nullptr) {
+    ESP_LOGE(TAG_DATA_SENSOR, "array_pref is null for sensor '%s'", this->get_label().c_str());
+    return;
+  }
+  
+  uint32_t hash = this->get_preference_hash();
+  this->array_pref_->create_preference(hash);
+  ESP_LOGD(TAG_DATA_SENSOR, "Created preference for sensor '%s' with hash 0x%08X", 
+           this->get_label().c_str(), hash);
+}
 
 void DataSensor::load_data_from_pref_() {
-  ESP_LOGV(TAG_DATA_SENSOR, "Loading data from preferences for sensor '%s'", this->get_label().c_str());
+  if (this->array_pref_ == nullptr) {
+    ESP_LOGE(TAG_DATA_SENSOR, "array_pref is null for sensor '%s'", this->get_label().c_str());
+    return;
+  }
   
-  const bool ok = this->data_pref_.load(this->data_vector_.data());
+  // Load data from persistent storage into array_pref
+  this->array_pref_->load();
   
-  if (ok) {
-    ESP_LOGI(TAG_DATA_SENSOR, "Loaded %u bytes from preferences for sensor '%s'", 
-             static_cast<unsigned>(this->data_vector_.size()), this->get_label().c_str());
+  if (this->array_pref_->is_valid()) {
+    // Copy from array_pref to local data_vector_
+    uint8_t *pref_data = this->array_pref_->data();
+    size_t size = std::min(this->data_vector_.size(), this->array_pref_->size());
+    std::memcpy(this->data_vector_.data(), pref_data, size);
+    ESP_LOGI(TAG_DATA_SENSOR, "Loaded %u bytes from preferences into local vector for sensor '%s'", 
+             static_cast<unsigned>(size), this->get_label().c_str());
   } else {
     ESP_LOGI(TAG_DATA_SENSOR, "No stored values for sensor '%s'; using defaults (zeros)", 
              this->get_label().c_str());
-    this->clear_data_vector();
-    this->save_data_to_pref_();
   }
 }
 
 void DataSensor::save_data_to_pref_() {
-  ESP_LOGV(TAG_DATA_SENSOR, "Saving data for sensor '%s'", this->get_label().c_str());
-  
-  const bool ok = this->data_pref_.save(this->data_vector_.data());
-  
-  if (ok) {
-    ESP_LOGI(TAG_DATA_SENSOR, "Saved %u bytes to preferences for sensor '%s'", 
-             static_cast<unsigned>(this->data_vector_.size()), this->get_label().c_str());
-  } else {
-    ESP_LOGW(TAG_DATA_SENSOR, "Failed to save data to preferences for sensor '%s'", 
-             this->get_label().c_str());
+  if (this->array_pref_ == nullptr) {
+    ESP_LOGE(TAG_DATA_SENSOR, "array_pref is null for sensor '%s'", this->get_label().c_str());
+    return;
   }
+  
+  // Copy from local data_vector_ to array_pref
+  uint8_t *pref_data = this->array_pref_->data();
+  size_t size = std::min(this->data_vector_.size(), this->array_pref_->size());
+  std::memcpy(pref_data, this->data_vector_.data(), size);
+  
+  // Save to persistent storage
+  this->array_pref_->save();
+  ESP_LOGI(TAG_DATA_SENSOR, "Saved %u bytes from local vector to preferences for sensor '%s'", 
+           static_cast<unsigned>(size), this->get_label().c_str());
 }
+
 // log datasensor data for debugging
 void DataSensor::log_data_sensor(std::string prefix ) {
-    ESP_LOGI(TAG_DATA_SENSOR, "Fucntion %s DataSensor '%s' data vector contents:", prefix.c_str(), this->get_label().c_str());
-    for (size_t i = 0; i < this->data_vector_.size(); ++i) {
-        ESP_LOGI(TAG_DATA_SENSOR, "Index %u: 0x%02X", static_cast<unsigned>(i), this->data_vector_[i]);
-    }
+  ESP_LOGI(TAG_DATA_SENSOR, "Function %s DataSensor '%s' data vector contents:", prefix.c_str(), this->get_label().c_str());
+  for (size_t i = 0; i < this->data_vector_.size(); ++i) {
+    ESP_LOGI(TAG_DATA_SENSOR, "Index %u: 0x%02X", static_cast<unsigned>(i), this->data_vector_[i]);
+  }
 }
 
 //class Schedule;
@@ -334,8 +351,8 @@ void Schedule::set_max_schedule_entries(size_t entries) {
     this->set_max_schedule_size(entries);  
 }
 void Schedule::set_max_schedule_size(size_t size) {
-    this->schedule_max_size_ = size * 2;  // Each entry has a start and end time so actual size is double   // Resize the vector once the size is known at runtime
-    //this->schedule_times_in_minutes_.resize(this->schedule_max_size_); 
+    this->schedule_max_size_ = (size * 4)+4;  // Each entry has a start and end time so actual size is double, plus 2 for terminator all in 16bit so *2
+    this->schedule_times_in_minutes_.resize(this->schedule_max_size_); 
 }
 
 void Schedule::setup() {
@@ -346,18 +363,11 @@ void Schedule::setup() {
         sensor->set_parent_schedule(this);
         sensor->setup();
     }
-    
-    // Calculate preference size and create preference object ONCE
-    size_t pref_size_bytes = this->schedule_max_size_ * sizeof(uint16_t);
-    uint32_t pref_hash = this->get_object_id_hash();
-    
-    ESP_LOGI(TAG, "Creating schedule preference: hash=0x%08X, size=%zu bytes (%zu uint16_t values)",
-             pref_hash, pref_size_bytes, this->schedule_max_size_);
-    
-    //this->schedule_pref_ = global_preferences->make_preference((size_t)pref_size_bytes,(uint32_t)pref_hash,true);
-    
-    // Now load from preference
-   // this->load_schedule_from_pref_();
+    // Create schedule preference object
+    this->create_schedule_preference();
+    // Now load from preference;
+    this->load_schedule_from_pref_();
+
     this->setup_schedule_retrieval_service_();
     this->setup_notification_service_();
 }
@@ -409,14 +419,48 @@ bool Schedule::isValidTime_(const JsonVariantConst &time_obj) const {
     }
     return false;
 }
+// Create the schedule preference object
+void Schedule::create_schedule_preference() {
+    if (!sched_array_pref_) return;
+        sched_array_pref_->create_preference(this->get_object_id_hash());
+}
+
 // Function to load the array from flash memory
 void Schedule::load_schedule_from_pref_() {
     ESP_LOGV(TAG, "Loading schedule from preferences");
-    
+    if (!sched_array_pref_) {
+        ESP_LOGW(TAG, "No schedule preference object available to load from");
+        return;
+    } 
     // Create temporary buffer to load data
     std::vector<uint16_t> temp_buffer(this->schedule_max_size_);
-    const bool ok = this->schedule_pref_.load(temp_buffer.data());
-    
+    // Load data into the array preference
+    this->sched_array_pref_->load();
+    //
+    bool ok = this->sched_array_pref_->is_valid();
+    //bool ok = false;
+ 
+   if (!ok) {
+       ESP_LOGW(TAG, "Schedule preference data is not valid");
+    }
+    else {
+        uint8_t *buf = this->sched_array_pref_->data();
+        std::memcpy(temp_buffer.data(), buf, this->sched_array_pref_->size());
+        // Check for terminator (0xFFFF, 0xFFFF) to determine actual number of entries
+        for (size_t i = 0; i < this->schedule_max_size_; i += 2) {
+            if (temp_buffer[i] == 0xFFFF && temp_buffer[i + 1] == 0xFFFF) {
+                ESP_LOGI(TAG, "Found terminator at index %u; actual schedule size is %u entries", 
+                         static_cast<unsigned>(i / 2), static_cast<unsigned>(i));
+                ok=true;
+                break;
+            }
+            if (i == this->schedule_max_size_ - 2) {
+                ESP_LOGW(TAG, "No terminator found");
+                ok=false;
+            }
+        }
+    }
+        
     if (ok) {
         // Copy all data from temp_buffer into schedule_times_in_minutes_
         this->schedule_times_in_minutes_.clear();
@@ -429,10 +473,10 @@ void Schedule::load_schedule_from_pref_() {
         
         ESP_LOGI(TAG, "Loaded %u uint16_t values from preferences", 
                  static_cast<unsigned>(this->schedule_times_in_minutes_.size()));
-        // Fill remaining entries with zeros if needed
+       /*  // Fill remaining entries with zeros if needed
         while (this->schedule_times_in_minutes_.size() < this->schedule_max_size_) {
             this->schedule_times_in_minutes_.push_back(0);
-        }   
+        }   */ 
     } else {
         // No stored data: use YAML initial values and persist them
         this->schedule_times_in_minutes_ = this->factory_reset_values_;
@@ -443,10 +487,12 @@ void Schedule::load_schedule_from_pref_() {
        while (this->schedule_times_in_minutes_.size() < this->schedule_max_size_) {
            this->schedule_times_in_minutes_.push_back(0);
         }
-        this->save_schedule_to_pref_();
-        ESP_LOGI(TAG, "No stored values; using YAML defaults and saving them");
+        // save defaults to preferences
+        uint8_t *buf = sched_array_pref_->data();
+        std::memcpy(buf, this->schedule_times_in_minutes_.data(), sched_array_pref_->size());
+        sched_array_pref_->save();
+        ESP_LOGI(TAG, "No stored values; using factory defaults and saving them");
     }
-    
     // Debug log values
     for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); ++i) {
         ESP_LOGD(TAG, "schedule_times_in_minutes_[%u] = %u", static_cast<unsigned>(i), this->schedule_times_in_minutes_[i]);
@@ -462,30 +508,11 @@ void Schedule::save_schedule_to_pref_() {
         schedule_times_in_minutes_.resize(schedule_max_size_);
         ESP_LOGW(TAG, "Input schedule size exceeds max size. Truncating to max size of %zu entries.", schedule_max_size_);
     }
-    
-    // Create buffer of exact size
-    std::vector<uint16_t> save_buffer(this->schedule_max_size_, 0);
-    
-    // Copy data into buffer
-    const size_t n = std::min(this->schedule_times_in_minutes_.size(), this->schedule_max_size_);
-    for (size_t i = 0; i < n; ++i) {
-        save_buffer[i] = this->schedule_times_in_minutes_[i];
-    }
-    
-    ESP_LOGD(TAG, "Saving %zu values to preference...", n);
-    
-    // Save the entire buffer
-    const bool ok = this->schedule_pref_.save(save_buffer.data());
-    
-    if (ok) {
-        ESP_LOGI(TAG, "Saved %u uint16_t values to preferences (%zu bytes)", 
-                 static_cast<unsigned>(n),
-                 this->schedule_max_size_ * sizeof(uint16_t));
-    } else {
-        ESP_LOGW(TAG, "Failed to save values to preferences");
-    }
+    uint8_t *buf = sched_array_pref_->data();
+    std::memcpy(buf, this->schedule_times_in_minutes_.data(), this->sched_array_pref_->size());
+    this->sched_array_pref_->save();
+    ESP_LOGV(TAG, "Schedule times saved to preferences using %u bytes.", this->sched_array_pref_->size());
 }
-
 
 
 // Method to setup the automation and action to retrieve the schedule from Home Assistant
@@ -802,7 +829,7 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
             sensor->add_schedule_data_to_sensor(data_work_buffers[sensor_idx][entry_idx], entry_idx);
         }
         
-        // Save sensor data to preferences
+        // Save sensor data from local vector to preferences
         sensor->save_data_to_pref_();
         
         ESP_LOGI(TAG, "Populated sensor '%s' with %u entries", 
@@ -886,10 +913,10 @@ void Schedule::log_schedule_data() {
                  static_cast<unsigned>(sensor_idx),
                  sensor->get_label().c_str(),
                  sensor->get_item_type(),
-                 static_cast<unsigned>(sensor->get_data_vector().size()));
+                 static_cast<unsigned>(sensor->get_data_vector_size()));
         
         uint16_t bytes_per_item = sensor->get_bytes_for_type(sensor->get_item_type());
-        size_t num_entries = sensor->get_data_vector().size() / bytes_per_item;
+        size_t num_entries = sensor->get_data_vector_size() / bytes_per_item;
         
         // Log each value in the sensor's data vector
         for (size_t entry_idx = 0; entry_idx < num_entries; ++entry_idx) {

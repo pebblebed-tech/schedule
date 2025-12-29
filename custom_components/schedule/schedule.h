@@ -34,22 +34,25 @@ class DataSensor : public sensor::Sensor {
   void set_item_type(uint16_t item_type) { this->item_type_ = item_type; }
   void set_max_schedule_data_entries(uint16_t size);
   void set_parent_schedule(Schedule *parent) { this->parent_schedule_ = parent; }
+  void set_array_preference(ArrayPreferenceBase *array_pref) { this->array_pref_ = array_pref; }
 
   // Getters
   const std::string &get_label() const { return label_; }
   uint16_t get_item_type() const { return item_type_; }
   uint16_t get_max_schedule_data_entries() const { return max_schedule_entries_; }
-  std::vector<uint8_t>& get_data_vector() { return data_vector_; }
-  const std::vector<uint8_t>& get_data_vector() const { return data_vector_; }
 
   // Update the sensor value
   void publish_value(float value) { this->publish_state(value); }
   
-  // Clear the data vector - set all bytes to 0
+  // Clear the local data vector - set all bytes to 0
   void clear_data_vector() { 
     std::fill(this->data_vector_.begin(), this->data_vector_.end(), 0);
   }
   
+  // Access to data vector
+  std::vector<uint8_t>& get_data_vector() { return data_vector_; }
+  const std::vector<uint8_t>& get_data_vector() const { return data_vector_; }
+  uint16_t get_data_vector_size() const { return this->data_vector_.size(); }
   // Add value from string representation
   void add_schedule_data_to_sensor(const std::string &value_str, size_t index);
 
@@ -60,21 +63,20 @@ class DataSensor : public sensor::Sensor {
   uint16_t get_bytes_for_type(uint16_t type) const;
   // Log sensor data for debugging
   void log_data_sensor(std::string prefix );
+  
   // Preference management
-  void load_data_from_pref_();
-  void save_data_to_pref_();
-  uint32_t get_data_preference_hash() const;
+  uint32_t get_preference_hash() const;
+  void create_preference();
+  void load_data_from_pref_();  // Load from array_pref_ to data_vector_
+  void save_data_to_pref_();    // Save from data_vector_ to array_pref_
 
  protected:
   std::string label_;
   uint16_t item_type_{0};
   uint16_t max_schedule_entries_{0};
-  std::vector<uint8_t> data_vector_;
+  std::vector<uint8_t> data_vector_;  // Local working storage
+  ArrayPreferenceBase *array_pref_{nullptr};  // Persistent storage
   Schedule *parent_schedule_{nullptr};
-  ESPPreferenceObject data_pref_;
-  
-  // Helper function to create preference object
-  void create_preference_();
 
 };
 
@@ -95,7 +97,8 @@ class Schedule : public EntityBase, public Component  {
   void set_max_schedule_entries(size_t entries);
    /// Trigger a schedule.get_schedule request.
   void request_schedule();
-   void load_schedule_from_pref_();
+  void create_schedule_preference();
+  void load_schedule_from_pref_();
   void save_schedule_to_pref_();
   void setup_schedule_retrieval_service_();
   void request_pref_hash() {
