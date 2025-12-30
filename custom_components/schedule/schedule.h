@@ -11,74 +11,10 @@
 #include <string>
 #include <cstring>
 #include "array_preference.h"
+#include "data_sensor.h"
 
 namespace esphome {
 namespace schedule {
-
-// Forward declaration
-class Schedule;
-
-
-// DataSensor class
-class DataSensor : public sensor::Sensor {
- public:
-  DataSensor() = default;
-
-  // Setup method to handle initialization and preference loading
-  void setup();
-  // Dump configuration for debugging
-  void dump_config();
-
-  // Setters
-  void set_label(const std::string &label) { this->label_ = label; }
-  void set_item_type(uint16_t item_type) { this->item_type_ = item_type; }
-  void set_max_schedule_data_entries(uint16_t size);
-  void set_parent_schedule(Schedule *parent) { this->parent_schedule_ = parent; }
-  void set_array_preference(ArrayPreferenceBase *array_pref) { this->array_pref_ = array_pref; }
-
-  // Getters
-  const std::string &get_label() const { return label_; }
-  uint16_t get_item_type() const { return item_type_; }
-  uint16_t get_max_schedule_data_entries() const { return max_schedule_entries_; }
-
-  // Update the sensor value
-  void publish_value(float value) { this->publish_state(value); }
-  
-  // Clear the local data vector - set all bytes to 0
-  void clear_data_vector() { 
-    std::fill(this->data_vector_.begin(), this->data_vector_.end(), 0);
-  }
-  
-  // Access to data vector
-  std::vector<uint8_t>& get_data_vector() { return data_vector_; }
-  const std::vector<uint8_t>& get_data_vector() const { return data_vector_; }
-  uint16_t get_data_vector_size() const { return this->data_vector_.size(); }
-  // Add value from string representation
-  void add_schedule_data_to_sensor(const std::string &value_str, size_t index);
-
-  // Get value from data vector at index, convert to float and publish
-  void get_and_publish_sensor_value(size_t index);
-  
-  // Helper function to get bytes for each type
-  uint16_t get_bytes_for_type(uint16_t type) const;
-  // Log sensor data for debugging
-  void log_data_sensor(std::string prefix );
-  
-  // Preference management
-  uint32_t get_preference_hash() const;
-  void create_preference();
-  void load_data_from_pref_();  // Load from array_pref_ to data_vector_
-  void save_data_to_pref_();    // Save from data_vector_ to array_pref_
-
- protected:
-  std::string label_;
-  uint16_t item_type_{0};
-  uint16_t max_schedule_entries_{0};
-  std::vector<uint8_t> data_vector_;  // Local working storage
-  ArrayPreferenceBase *array_pref_{nullptr};  // Persistent storage
-  Schedule *parent_schedule_{nullptr};
-
-};
 
 // Schedule class
 class Schedule : public EntityBase, public Component  {
@@ -137,9 +73,6 @@ class Schedule : public EntityBase, public Component  {
   std::vector<DataItem> data_items_;
   std::vector<DataSensor *> data_sensors_;
 protected:
-
-  ESPPreferenceObject schedule_pref_;
-  ESPPreferenceObject test_pref_;
 
   // Action object that sends the HA service call.
   esphome::api::HomeAssistantServiceCallAction<> *ha_get_schedule_action_{nullptr};
