@@ -7,6 +7,12 @@
 #include "esphome/components/api/homeassistant_service.h"
 #include "esphome/components/json/json_util.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/button/button.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/switch/switch.h"
+#ifdef USE_SELECT
+#include "esphome/components/select/select.h"
+#endif
 #include <vector>
 #include <string>
 #include <cstring>
@@ -15,6 +21,42 @@
 
 namespace esphome {
 namespace schedule {
+
+// Forward declaration
+class Schedule;
+class ScheduleModeSelect;
+
+// UpdateScheduleButton class - button to trigger schedule update
+class UpdateScheduleButton : public button::Button, public Component {
+ public:
+  void set_schedule(Schedule *schedule) { this->schedule_ = schedule; }
+  
+ protected:
+  void press_action() override;
+  Schedule *schedule_{nullptr};
+};
+
+// ScheduleSwitchIndicator class - binary sensor to indicate schedule state
+class ScheduleSwitchIndicator : public binary_sensor::BinarySensor, public Component {
+ public:
+  void set_schedule(Schedule *schedule) { this->schedule_ = schedule; }
+  
+  // Method to publish state from Schedule component
+  void publish_switch_state(bool state) { this->publish_state(state); }
+  
+ protected:
+  Schedule *schedule_{nullptr};
+};
+
+// ScheduleSwitch class - switch controlled by schedule
+class ScheduleSwitch : public switch_::Switch, public Component {
+ public:
+  void set_schedule(Schedule *schedule) { this->schedule_ = schedule; }
+  
+ protected:
+  void write_state(bool state) override;
+  Schedule *schedule_{nullptr};
+};
 
 // Schedule class
 class Schedule : public EntityBase, public Component  {
@@ -54,6 +96,39 @@ class Schedule : public EntityBase, public Component  {
   }
   
   void sched_add_pref(ArrayPreferenceBase *array_pref);
+  
+  // Set the switch indicator binary sensor
+  void set_switch_indicator(ScheduleSwitchIndicator *indicator) {
+    this->switch_indicator_ = indicator;
+  }
+  
+  void set_schedule_switch(ScheduleSwitch *schedule_switch) { 
+    this->schedule_switch_ = schedule_switch; 
+  }
+  
+  void set_mode_select(ScheduleModeSelect *mode_select) { 
+    this->mode_select_ = mode_select; 
+  }
+  
+  // Update the switch indicator state
+  void update_switch_indicator(bool state) {
+    if (this->switch_indicator_ != nullptr) {
+      this->switch_indicator_->publish_switch_state(state);
+    }
+  }
+  
+  // Control the schedule switch state
+  void set_schedule_switch_state(bool state) {
+    if (this->schedule_switch_ != nullptr) {
+      this->schedule_switch_->publish_state(state);
+    }
+  }
+  
+  // Set the mode select option programmatically
+  void set_mode_option(const std::string &option);
+  
+  // Called when mode select changes from Home Assistant
+  void on_mode_changed(const std::string &mode);
 
   // Test methods for debugging preference storage
   void test_create_preference();
@@ -72,6 +147,9 @@ class Schedule : public EntityBase, public Component  {
   std::string ha_schedule_entity_id_;
   std::vector<DataItem> data_items_;
   std::vector<DataSensor *> data_sensors_;
+  ScheduleSwitchIndicator *switch_indicator_{nullptr};
+  ScheduleSwitch *schedule_switch_{nullptr};
+  ScheduleModeSelect *mode_select_{nullptr};
 protected:
 
   // Action object that sends the HA service call.

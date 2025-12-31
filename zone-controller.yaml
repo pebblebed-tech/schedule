@@ -105,12 +105,27 @@ schedule:
   name: "Test Schedule"
   ha_schedule_entity_id: "schedule.test_sche"
   max_schedule_size: 100
+  schedule_update_button: Update Schedule
+  schedule_switch_indicator: 
+    id: test_schedule_active
+    name: "Test Schedule Active"
+  schedule_switch:
+    id: test_schedule_switch
+    name: "Test Schedule Switch"
+    restore_mode: RESTORE_DEFAULT_OFF
   schedule_variables:
     - id: temp_sensor
       label: "temp"
       item_type: float
       name: "Schedule Temperature"
-      
+
+# Mode select for the schedule component
+select:
+  - platform: schedule
+    schedule_id: testschedule
+    schedule_mode_select:
+      name: "Schedule Mode"
+      # Options are: Manual Off, Early Off, Auto, Manual On, Boost On
 
 
 

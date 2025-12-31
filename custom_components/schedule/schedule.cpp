@@ -1,7 +1,8 @@
 #include "schedule.h"
 #include "data_sensor.h"
-// Include DataSensor implementation directly for ESPHome compilation
-#include "data_sensor.cpp"
+#ifdef USE_SELECT
+#include "select/mode_select.h"
+#endif
 #include "esphome/components/api/api_server.h"
 #include "esphome/components/api/homeassistant_service.h"
 #include "esphome/core/application.h"
@@ -14,16 +15,15 @@
 #include <functional>
 
 
-// TODO: Clean up schedule code
+
 // TODO: Add error handling for service call failures
 // TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
 // TODO: Add a timer to check to and from times and set a switch and the data_sensors if time is within a scheduled period
 // TODO: In the main loop check for WIFI / API connection status and adjust state machine to ensure when connetion is restored schedule is re-requested
 // TODO: Add state machine to control device behaviour in device loop modes (setup, time_not_valid, no_schedule_stored, normal_connected_on,normal_connected_off, normal_disconnected_on,normal_disconnected_off, Error etc)
 // TODO: Add switch to that is controlled by schedule to & from scheduled times
-// TODO: Add feedback indicator to HomeAssistant on schedule switch status
-// TODO: Add button to trigger schedule retrieval on demand from HomeAssistant
-// TODO: Add select that allows HomeAssistant user to set mode of operation (e.g., auto/manual/off/boost)
+// TODO: Add a timer that runs every second to check if we are connected to home assistant
+// TODO: Check that select defaults to manual off on first run and saves to preferences
 // TODO: Ensure schedule_retrieval_service_ is only setup once
 // TODO: Run clang-format on these files
 // TODO: Add Doxygen comments to all methods and classes
@@ -67,9 +67,31 @@ class MyErrorTrigger : public Trigger<std::string> {
   }
 };
 
+// UpdateScheduleButton implementation
+void UpdateScheduleButton::press_action() {
+  if (this->schedule_ != nullptr) {
+    ESP_LOGI(TAG, "Update button pressed, requesting schedule update...");
+    this->schedule_->request_schedule();
+  } else {
+    ESP_LOGW(TAG, "Update button pressed but schedule is not set");
+  }
+}
 
+// ScheduleSwitch implementation
+void ScheduleSwitch::write_state(bool state) {
+  // Publish the new state
+  this->publish_state(state);
+  
+  // Log the state change
+  ESP_LOGI(TAG, "Schedule switch state changed to: %s", state ? "ON" : "OFF");
+  
+  // Update the indicator to follow the switch state
+  if (this->schedule_ != nullptr) {
+    this->schedule_->update_switch_indicator(state);
+  }
+}
 
-// DataSensor implementations
+// Schedule implementations
 
 //class Schedule;
 // Setter for max schedule entries EG number of schedule time pairs
@@ -692,6 +714,32 @@ void Schedule::log_schedule_data() {
 void Schedule::sched_add_pref(ArrayPreferenceBase *array_pref) {
   sched_array_pref_ = array_pref;
 
+}
+
+// Callback when mode select changes from Home Assistant
+void Schedule::on_mode_changed(const std::string &mode) {
+  ESP_LOGI(TAG, "Schedule mode changed by Home Assistant to: %s", mode.c_str());
+  
+  // Add your custom logic here to respond to mode changes
+  // For example, update schedule behavior based on the selected mode
+  if (mode == "Manual Off") {
+    // Handle manual off mode
+  } else if (mode == "Early Off") {
+    // Handle early off mode
+  } else if (mode == "Auto") {
+    // Handle auto mode
+  } else if (mode == "Manual On") {
+    // Handle manual on mode
+  } else if (mode == "Boost On") {
+    // Handle boost mode
+  }
+}
+
+// Set the mode select option programmatically
+void Schedule::set_mode_option(const std::string &option) {
+  if (this->mode_select_ != nullptr) {
+    this->mode_select_->publish_state(option);
+  }
 }
 
 

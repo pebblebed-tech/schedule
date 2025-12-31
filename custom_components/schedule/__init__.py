@@ -5,21 +5,32 @@ from esphome.components import button
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
+    ENTITY_CATEGORY_CONFIG,
+    ICON_RULER,
+    CONF_ICON,
+    CONF_ENTITY_CATEGORY,
 
 )
 from esphome.components import sensor
+from esphome.components import binary_sensor
+from esphome.components import switch
+from esphome.cpp_generator import MockObjClass
 
 
 
 CODEOWNERS = ["@pebblebed-tech"]
-DEPENDENCIES = ["api"]
+DEPENDENCIES = ["api", "switch", "binary_sensor", "button", "sensor"]
 
 # Define a configuration key for the array size
+CONF_SCHEDULE_ID = "schedule_id"
 CONF_MAX_SCHEDULE_SIZE = "max_schedule_size"
 CONF_HA_SCHEDULE_ENTITY_ID = "ha_schedule_entity_id"
 CONF_SCHEDULE_VARS = "schedule_variables"
 CONF_ITEM_LABEL = "label"
 CONF_ITEM_TYPE = "item_type"
+CONF_UPDATE_BUTTON = "schedule_update_button"
+CONF_SCHEDULE_SWITCH_IND = "schedule_switch_indicator"
+CONF_SCHEDULE_SWITCH = "schedule_switch"
 
 
 # Define the namespace and the C++ class name
@@ -27,6 +38,9 @@ schedule_ns = cg.esphome_ns.namespace("schedule")
 Schedule = schedule_ns.class_("Schedule", cg.Component, cg.EntityBase)
 DataSensor = schedule_ns.class_("DataSensor", sensor.Sensor)
 ArrayPreference = schedule_ns.class_("ArrayPreference", cg.Component)
+UpdateScheduleButton = schedule_ns.class_("UpdateScheduleButton", button.Button, cg.Component)
+ScheduleSwitchIndicator = schedule_ns.class_("ScheduleSwitchIndicator", binary_sensor.BinarySensor, cg.Component)
+ScheduleSwitch = schedule_ns.class_("ScheduleSwitch", switch.Switch, cg.Component)
 
 
 
@@ -64,7 +78,23 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_HA_SCHEDULE_ENTITY_ID): cv.string,
             cv.Optional(CONF_MAX_SCHEDULE_SIZE, default=21): cv.int_,
             cv.Optional(CONF_SCHEDULE_VARS): cv.ensure_list(DATA_SENSOR_SCHEMA),
-            
+            cv.Required(CONF_UPDATE_BUTTON): cv.maybe_simple_value(
+                button.button_schema(
+                    UpdateScheduleButton,
+                    entity_category=ENTITY_CATEGORY_CONFIG,
+                ),
+                key=CONF_NAME,
+            ),
+            cv.Optional(CONF_SCHEDULE_SWITCH_IND): cv.maybe_simple_value(
+                binary_sensor.binary_sensor_schema(
+                    ScheduleSwitchIndicator,
+                ),
+                key=CONF_NAME,
+            ),
+            cv.Required(CONF_SCHEDULE_SWITCH): switch.switch_schema(
+                ScheduleSwitch,
+                default_restore_mode="RESTORE_DEFAULT_OFF",
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -84,6 +114,11 @@ async def to_code(config):
     # Create a NEW ID object for the child 
     array_pref = cg.RawExpression(f'new esphome::schedule::ArrayPreference<{size}>()')
     cg.add(var.sched_add_pref(array_pref))
+    # Generate button ID
+    button_var = await button.new_button(config[CONF_UPDATE_BUTTON])
+    await cg.register_component(button_var, config[CONF_UPDATE_BUTTON])
+    # Link button to schedule component
+    cg.add(button_var.set_schedule(var))
     # Process schedule variables
     if CONF_SCHEDULE_VARS in config:
         for sensor_config in config[CONF_SCHEDULE_VARS]:
@@ -112,7 +147,27 @@ async def to_code(config):
             # Register sensor with schedule component
             cg.add(var.register_data_sensor(sens))
 
-
+    # Create binary sensor for schedule switch indicator if configured
+    if CONF_SCHEDULE_SWITCH_IND in config:
+        binary_sensor_var = await binary_sensor.new_binary_sensor(config[CONF_SCHEDULE_SWITCH_IND])
+        await cg.register_component(binary_sensor_var, config[CONF_SCHEDULE_SWITCH_IND])
         
+        # Link binary sensor to schedule component
+        cg.add(binary_sensor_var.set_schedule(var))
+        cg.add(var.set_switch_indicator(binary_sensor_var))
 
+    # Create required schedule switch
+    switch_var = await switch.new_switch(config[CONF_SCHEDULE_SWITCH])
+    await cg.register_component(switch_var, config[CONF_SCHEDULE_SWITCH])
+    
+    # Set internal to true by default
+    cg.add(switch_var.set_internal(True))
+    
+    # Link switch to schedule component
+    cg.add(switch_var.set_schedule(var))
+    cg.add(var.set_schedule_switch(switch_var))
+
+ 
+        
     await cg.register_component(var, config)
+
