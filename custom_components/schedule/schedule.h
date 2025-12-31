@@ -10,6 +10,7 @@
 #include "esphome/components/button/button.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #ifdef USE_SELECT
 #include "esphome/components/select/select.h"
 #endif
@@ -110,6 +111,14 @@ class Schedule : public EntityBase, public Component  {
     this->mode_select_ = mode_select; 
   }
   
+  void set_current_event_sensor(text_sensor::TextSensor *sensor) {
+    this->current_event_sensor_ = sensor;
+  }
+  
+  void set_next_event_sensor(text_sensor::TextSensor *sensor) {
+    this->next_event_sensor_ = sensor;
+  }
+  
   // Update the switch indicator state
   void update_switch_indicator(bool state) {
     if (this->switch_indicator_ != nullptr) {
@@ -150,6 +159,10 @@ class Schedule : public EntityBase, public Component  {
   ScheduleSwitchIndicator *switch_indicator_{nullptr};
   ScheduleSwitch *schedule_switch_{nullptr};
   ScheduleModeSelect *mode_select_{nullptr};
+  text_sensor::TextSensor *current_event_sensor_{nullptr};
+  text_sensor::TextSensor *next_event_sensor_{nullptr};
+  bool ha_connected_{false};
+  uint32_t last_connection_check_{0};
 protected:
 
   // Action object that sends the HA service call.

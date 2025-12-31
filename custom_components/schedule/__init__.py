@@ -14,12 +14,13 @@ from esphome.const import (
 from esphome.components import sensor
 from esphome.components import binary_sensor
 from esphome.components import switch
+from esphome.components import text_sensor
 from esphome.cpp_generator import MockObjClass
 
 
 
 CODEOWNERS = ["@pebblebed-tech"]
-DEPENDENCIES = ["api", "switch", "binary_sensor", "button", "sensor"]
+DEPENDENCIES = ["api", "switch", "binary_sensor", "button", "sensor", "text_sensor"]
 
 # Define a configuration key for the array size
 CONF_SCHEDULE_ID = "schedule_id"
@@ -31,6 +32,8 @@ CONF_ITEM_TYPE = "item_type"
 CONF_UPDATE_BUTTON = "schedule_update_button"
 CONF_SCHEDULE_SWITCH_IND = "schedule_switch_indicator"
 CONF_SCHEDULE_SWITCH = "schedule_switch"
+CONF_CURRENT_EVENT = "current_event"
+CONF_NEXT_EVENT = "next_event"
 
 
 # Define the namespace and the C++ class name
@@ -94,6 +97,14 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_SCHEDULE_SWITCH): switch.switch_schema(
                 ScheduleSwitch,
                 default_restore_mode="RESTORE_DEFAULT_OFF",
+            ),
+            cv.Optional(CONF_CURRENT_EVENT): cv.maybe_simple_value(
+                text_sensor.text_sensor_schema(),
+                key=CONF_NAME,
+            ),
+            cv.Optional(CONF_NEXT_EVENT): cv.maybe_simple_value(
+                text_sensor.text_sensor_schema(),
+                key=CONF_NAME,
             ),
         }
     )
@@ -166,6 +177,16 @@ async def to_code(config):
     # Link switch to schedule component
     cg.add(switch_var.set_schedule(var))
     cg.add(var.set_schedule_switch(switch_var))
+
+    # Create current_event text sensor if configured
+    if CONF_CURRENT_EVENT in config:
+        current_event_var = await text_sensor.new_text_sensor(config[CONF_CURRENT_EVENT])
+        cg.add(var.set_current_event_sensor(current_event_var))
+    
+    # Create next_event text sensor if configured
+    if CONF_NEXT_EVENT in config:
+        next_event_var = await text_sensor.new_text_sensor(config[CONF_NEXT_EVENT])
+        cg.add(var.set_next_event_sensor(next_event_var))
 
  
         

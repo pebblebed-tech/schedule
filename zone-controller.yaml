@@ -113,6 +113,10 @@ schedule:
     id: test_schedule_switch
     name: "Test Schedule Switch"
     restore_mode: RESTORE_DEFAULT_OFF
+  current_event:
+    name: "Current Event"
+  next_event:
+    name: "Next Event"
   schedule_variables:
     - id: temp_sensor
       label: "temp"

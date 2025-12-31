@@ -108,6 +108,11 @@ void Schedule::set_max_schedule_size(size_t size) {
 void Schedule::setup() {
     ESP_LOGI(TAG, "Setting up Schedule component...");
     
+    // Check initial Home Assistant API connection status
+    this->ha_connected_ = api::global_api_server->is_connected();
+    ESP_LOGI(TAG, "Initial Home Assistant API connection status: %s", this->ha_connected_ ? "connected" : "disconnected");
+    this->last_connection_check_ = millis();
+    
     // Set parent reference and call setup on each data sensor
     // The data sensors hold the attribute data that are supplied by the service call
     for (auto *sensor : this->data_sensors_) {
@@ -121,10 +126,26 @@ void Schedule::setup() {
 
     this->setup_schedule_retrieval_service_();
     this->setup_notification_service_();
+    if (this->current_event_sensor_ != nullptr) {
+        this->current_event_sensor_->publish_state("Initializing...");
+    }
+    if (this->next_event_sensor_ != nullptr) {
+        this->next_event_sensor_->publish_state("Initializing...");
+    }
 }
 
 void Schedule::loop() {
-
+  // Check Home Assistant API connection every 60 seconds
+  uint32_t now = millis();
+  if (now - this->last_connection_check_ >= 60000) {
+    this->last_connection_check_ = now;
+    
+    bool connected = api::global_api_server->is_connected();
+    if (this->ha_connected_ != connected) {
+      this->ha_connected_ = connected;
+      ESP_LOGI(TAG, "Home Assistant API connection status changed: %s", connected ? "connected" : "disconnected");
+    }
+  }
 }
 
 void Schedule::dump_config() {
