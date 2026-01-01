@@ -15,13 +15,15 @@ from esphome.components import sensor
 from esphome.components import binary_sensor
 from esphome.components import switch
 from esphome.components import text_sensor
-from esphome.cpp_generator import MockObjClass
+from esphome.components import select
+
 
 
 
 CODEOWNERS = ["@pebblebed-tech"]
 DEPENDENCIES = ["api", "switch", "binary_sensor", "button", "sensor", "text_sensor"]
-
+# For some reason select is not recognized as a dependency unless explicitly added
+AUTO_LOAD = ["select"]
 # Define a configuration key for the array size
 CONF_SCHEDULE_ID = "schedule_id"
 CONF_MAX_SCHEDULE_SIZE = "max_schedule_size"
@@ -34,7 +36,7 @@ CONF_SCHEDULE_SWITCH_IND = "schedule_switch_indicator"
 CONF_SCHEDULE_SWITCH = "schedule_switch"
 CONF_CURRENT_EVENT = "current_event"
 CONF_NEXT_EVENT = "next_event"
-
+CONF_MODE_SELECT = "mode_selector"
 
 # Define the namespace and the C++ class name
 schedule_ns = cg.esphome_ns.namespace("schedule")
@@ -44,6 +46,17 @@ ArrayPreference = schedule_ns.class_("ArrayPreference", cg.Component)
 UpdateScheduleButton = schedule_ns.class_("UpdateScheduleButton", button.Button, cg.Component)
 ScheduleSwitchIndicator = schedule_ns.class_("ScheduleSwitchIndicator", binary_sensor.BinarySensor, cg.Component)
 ScheduleSwitch = schedule_ns.class_("ScheduleSwitch", switch.Switch, cg.Component)
+ScheduleModeSelect = schedule_ns.class_("ScheduleModeSelect", select.Select, cg.Component)
+
+
+
+SCHEDULE_MODE_OPTIONS = [
+    "Manual Off",
+    "Early Off",
+    "Auto",
+    "Manual On",
+    "Boost On"
+]
 
 
 
@@ -104,6 +117,13 @@ CONFIG_SCHEMA = (
             ),
             cv.Optional(CONF_NEXT_EVENT): cv.maybe_simple_value(
                 text_sensor.text_sensor_schema(),
+                key=CONF_NAME,
+            ),
+            cv.Optional(CONF_MODE_SELECT): cv.maybe_simple_value(
+                select.select_schema(
+                    ScheduleModeSelect,
+                    entity_category=ENTITY_CATEGORY_CONFIG,
+                ),
                 key=CONF_NAME,
             ),
         }
@@ -187,6 +207,13 @@ async def to_code(config):
     if CONF_NEXT_EVENT in config:
         next_event_var = await text_sensor.new_text_sensor(config[CONF_NEXT_EVENT])
         cg.add(var.set_next_event_sensor(next_event_var))
+
+    # Create mode_select if configured
+    if CONF_MODE_SELECT in config:
+        mode_select_conf = config[CONF_MODE_SELECT]
+        mode_select_var = await select.new_select(mode_select_conf, options=SCHEDULE_MODE_OPTIONS)
+        await cg.register_component(mode_select_var, mode_select_conf)
+        cg.add(var.set_mode_select(mode_select_var))
 
  
         

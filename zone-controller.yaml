@@ -117,19 +117,13 @@ schedule:
     name: "Current Event"
   next_event:
     name: "Next Event"
+  mode_selector:
+    name: "Schedule Mode"
   schedule_variables:
     - id: temp_sensor
       label: "temp"
       item_type: float
       name: "Schedule Temperature"
-
-# Mode select for the schedule component
-select:
-  - platform: schedule
-    schedule_id: testschedule
-    schedule_mode_select:
-      name: "Schedule Mode"
-      # Options are: Manual Off, Early Off, Auto, Manual On, Boost On
 
 
 

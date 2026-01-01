@@ -1,8 +1,5 @@
 #include "schedule.h"
 #include "data_sensor.h"
-#ifdef USE_SELECT
-#include "select/mode_select.h"
-#endif
 #include "esphome/components/api/api_server.h"
 #include "esphome/components/api/homeassistant_service.h"
 #include "esphome/core/application.h"

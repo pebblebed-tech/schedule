@@ -11,9 +11,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
-#ifdef USE_SELECT
 #include "esphome/components/select/select.h"
-#endif
 #include <vector>
 #include <string>
 #include <cstring>
@@ -23,7 +21,7 @@
 namespace esphome {
 namespace schedule {
 
-// Forward declaration
+// Forward declarations
 class Schedule;
 class ScheduleModeSelect;
 
@@ -110,6 +108,11 @@ class Schedule : public EntityBase, public Component  {
   void set_mode_select(ScheduleModeSelect *mode_select) { 
     this->mode_select_ = mode_select; 
   }
+    // Set the mode select option programmatically
+  void set_mode_option(const std::string &option);
+  
+  // Called when mode select changes from Home Assistant
+  void on_mode_changed(const std::string &mode);
   
   void set_current_event_sensor(text_sensor::TextSensor *sensor) {
     this->current_event_sensor_ = sensor;
@@ -133,11 +136,7 @@ class Schedule : public EntityBase, public Component  {
     }
   }
   
-  // Set the mode select option programmatically
-  void set_mode_option(const std::string &option);
-  
-  // Called when mode select changes from Home Assistant
-  void on_mode_changed(const std::string &mode);
+
 
   // Test methods for debugging preference storage
   void test_create_preference();
