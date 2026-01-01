@@ -113,7 +113,7 @@ class Schedule : public EntityBase, public Component  {
   
   // Called when mode select changes from Home Assistant
   void on_mode_changed(const std::string &mode);
-  
+
   void set_current_event_sensor(text_sensor::TextSensor *sensor) {
     this->current_event_sensor_ = sensor;
   }
@@ -181,7 +181,9 @@ protected:
   void setup_notification_service_();
   // Send notification to Home Assistant
   void send_ha_notification_(const std::string &message, const std::string &title);
+
 };
+
 
 } // namespace schedule
 } // namespace esphome

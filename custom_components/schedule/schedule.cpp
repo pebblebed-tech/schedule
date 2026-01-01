@@ -105,10 +105,7 @@ void Schedule::set_max_schedule_size(size_t size) {
 void Schedule::setup() {
     ESP_LOGI(TAG, "Setting up Schedule component...");
     
-    // Check initial Home Assistant API connection status
-    this->ha_connected_ = api::global_api_server->is_connected();
-    ESP_LOGI(TAG, "Initial Home Assistant API connection status: %s", this->ha_connected_ ? "connected" : "disconnected");
-    this->last_connection_check_ = millis();
+    
     
     // Set parent reference and call setup on each data sensor
     // The data sensors hold the attribute data that are supplied by the service call
@@ -123,6 +120,11 @@ void Schedule::setup() {
 
     this->setup_schedule_retrieval_service_();
     this->setup_notification_service_();
+        // Check initial Home Assistant API connection status
+    this->ha_connected_ = api::global_api_server->is_connected();
+    ESP_LOGI(TAG, "Initial Home Assistant API connection status: %s", this->ha_connected_ ? "connected" : "disconnected");
+    this->last_connection_check_ = millis();
+    
     if (this->current_event_sensor_ != nullptr) {
         this->current_event_sensor_->publish_state("Initializing...");
     }
@@ -132,18 +134,28 @@ void Schedule::setup() {
 }
 
 void Schedule::loop() {
-  // Check Home Assistant API connection every 60 seconds
+ // Check Home Assistant API connection every 60 seconds
   uint32_t now = millis();
   if (now - this->last_connection_check_ >= 60000) {
     this->last_connection_check_ = now;
     
     bool connected = api::global_api_server->is_connected();
+    
+    // If connection state changed
     if (this->ha_connected_ != connected) {
-      this->ha_connected_ = connected;
-      ESP_LOGI(TAG, "Home Assistant API connection status changed: %s", connected ? "connected" : "disconnected");
+      if (connected) {
+        // Just reconnected
+        this->ha_connected_ = true;
+        ESP_LOGI(TAG, "Home Assistant API reconnected");
+      } else {
+        // Disconnected
+        this->ha_connected_ = false;
+        ESP_LOGI(TAG, "Home Assistant API disconnected");
+      }
     }
   }
 }
+
 
 void Schedule::dump_config() {
     
@@ -364,6 +376,7 @@ void Schedule::setup_schedule_retrieval_service_() {
         ESP_LOGW(TAG, "API not enabled in build");
     #endif 
 }
+
 // Method to setup the automation and action to send notifications to Home Assistant
 void Schedule::setup_notification_service_() {
     #ifdef USE_API
