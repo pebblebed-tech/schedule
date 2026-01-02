@@ -105,7 +105,8 @@ void Schedule::set_max_schedule_size(size_t size) {
 void Schedule::setup() {
     ESP_LOGI(TAG, "Setting up Schedule component...");
     
-    
+    // Check if device time is valid
+    this->check_rtc_time_valid_();
     
     // Set parent reference and call setup on each data sensor
     // The data sensors hold the attribute data that are supplied by the service call
@@ -124,6 +125,11 @@ void Schedule::setup() {
     this->ha_connected_ = api::global_api_server->is_connected();
     ESP_LOGI(TAG, "Initial Home Assistant API connection status: %s", this->ha_connected_ ? "connected" : "disconnected");
     this->last_connection_check_ = millis();
+   // If get schedule on reconnect is set and we are connected request schedule or if schedule is not valid
+    if ((this->ha_connected_ && this->update_on_reconnect_) || (this->ha_connected_ && this->schedule_valid_ == false)) {
+        ESP_LOGD(TAG, "Requesting update schedule from Home Assistant...");
+        this->request_schedule();
+    }
     
     if (this->current_event_sensor_ != nullptr) {
         this->current_event_sensor_->publish_state("Initializing...");
@@ -134,26 +140,39 @@ void Schedule::setup() {
 }
 
 void Schedule::loop() {
- // Check Home Assistant API connection every 60 seconds
-  uint32_t now = millis();
-  if (now - this->last_connection_check_ >= 60000) {
-    this->last_connection_check_ = now;
-    
-    bool connected = api::global_api_server->is_connected();
-    
-    // If connection state changed
-    if (this->ha_connected_ != connected) {
-      if (connected) {
-        // Just reconnected
-        this->ha_connected_ = true;
-        ESP_LOGI(TAG, "Home Assistant API reconnected");
-      } else {
-        // Disconnected
-        this->ha_connected_ = false;
-        ESP_LOGI(TAG, "Home Assistant API disconnected");
-      }
+    uint32_t now = millis();
+    // If time is not valid, check every second
+    if (!this->rtc_time_valid_){
+        if (now - this->last_time_check_ >= 1000) {
+            this->last_time_check_ = now;
+            this->check_rtc_time_valid_();
+        }
+        // If time is not valid, skip rest of loop
+        return;
     }
-  }
+    // Log state flags every 60 seconds
+    if (now - this->last_state_log_time_ >= 60000) {
+        this->last_state_log_time_ = now;
+        this->log_state_flags_();
+    }   
+    // Check Home Assistant API connection
+    // Every 5 seconds if never connected, every 60 seconds if previously connected
+    if (!this->ha_connected_){
+        uint32_t check_interval = this->ha_connected_once_ ? 60000 : 5000;
+        if (now - this->last_connection_check_ >= check_interval) {
+            this->last_connection_check_ = now;
+            this->check_ha_connection_();
+            if ((this->ha_connected_ && this->update_on_reconnect_) || (this->ha_connected_ && this->schedule_valid_ == false)) {
+                ESP_LOGI(TAG, "Reconnected to Home Assistant, requesting schedule update...");
+                this->request_schedule();
+            }
+        
+            // If not connected and the schedule is not valid, skip rest of loop
+            if (!this->schedule_valid_ && !this->ha_connected_) {
+                return;
+            }
+        }
+    }    
 }
 
 
@@ -166,6 +185,10 @@ void Schedule::dump_config() {
     ESP_LOGCONFIG(TAG, "Preference Hash: %u", this->get_preference_hash());
     ESP_LOGCONFIG(TAG, "Object Hash ID: %u", this->get_object_id_hash());
     ESP_LOGCONFIG(TAG, "name: %s", this->get_name());
+    ESP_LOGCONFIG(TAG, "Home Assistant connected: %s", this->ha_connected_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "RTC Time valid: %s", this->rtc_time_valid_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "Schedule valid: %s", this->schedule_valid_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "Schedule empty: %s", this->schedule_empty_ ? "Yes" : "No");
     ESP_LOGCONFIG(TAG, "Registered Data Sensors:");
     for (auto *sensor : this->data_sensors_) {
         sensor->dump_config();
@@ -175,6 +198,71 @@ void Schedule::dump_config() {
 
 void Schedule::set_schedule_entity_id(const std::string &ha_schedule_entity_id){
     this->ha_schedule_entity_id_ = ha_schedule_entity_id;
+}
+
+// Check and update RTC time validity
+void Schedule::check_rtc_time_valid_() {
+    if (this->time_ != nullptr) {
+        auto now = this->time_->now();
+        if (!now.is_valid()) {
+            if (this->rtc_time_valid_) {
+                // Time was valid but now is not (shouldn't normally happen)
+                ESP_LOGW(TAG, "Device time is no longer valid!");
+                this->rtc_time_valid_ = false;
+            }
+            // Only log on first check during setup
+            else if (this->last_time_check_ == 0) {
+                ESP_LOGW(TAG, "Device time is not yet synchronized. Schedule functions will not work until time is valid.");
+            }
+        } else {
+            if (!this->rtc_time_valid_) {
+                // Time just became valid
+                ESP_LOGI(TAG, "Device time is now valid: %04d-%02d-%02d %02d:%02d:%02d",
+                         now.year, now.month, now.day_of_month,
+                         now.hour, now.minute, now.second);
+                this->rtc_time_valid_ = true;
+            }
+            // Only log verbose on first check during setup
+            else if (this->last_time_check_ == 0) {
+                ESP_LOGV(TAG, "Device time is valid: %04d-%02d-%02d %02d:%02d:%02d",
+                         now.year, now.month, now.day_of_month,
+                         now.hour, now.minute, now.second);
+            }
+        }
+    } else {
+        // Only log warning once during setup
+        if (this->last_time_check_ == 0) {
+            ESP_LOGW(TAG, "No time component configured. Time-based schedule functions will not work.");
+        }
+    }
+}
+
+// Check and update Home Assistant connection state
+void Schedule::check_ha_connection_() {
+    bool connected = api::global_api_server->is_connected();
+    
+    // If connection state changed
+    if (this->ha_connected_ != connected) {
+      if (connected) {
+        // Just reconnected
+        this->ha_connected_ = true;
+        this->ha_connected_once_ = true;  // Mark that we've connected at least once
+        ESP_LOGI(TAG, "Home Assistant API reconnected");
+      } else {
+        // Disconnected
+        this->ha_connected_ = false;
+        ESP_LOGI(TAG, "Home Assistant API disconnected");
+      }
+    }
+}
+
+// Log verbose state of boolean flags
+void Schedule::log_state_flags_() {
+    ESP_LOGV(TAG, "State flags: HA=%s, RTC=%s, Valid=%s, Empty=%s",
+             this->ha_connected_ ? "Y" : "N",
+             this->rtc_time_valid_ ? "Y" : "N",
+             this->schedule_valid_ ? "Y" : "N",
+             this->schedule_empty_ ? "Y" : "N");
 }
 
 // Helper function to convert "HH:MM:SS" or "HH:MM" to minutes from start of day
@@ -201,10 +289,18 @@ bool Schedule::isValidTime_(const JsonVariantConst &time_obj) const {
     }
     return false;
 }
+
+
 // Create the schedule preference object
 void Schedule::create_schedule_preference() {
-    if (!sched_array_pref_) return;
-        sched_array_pref_->create_preference(this->get_object_id_hash());
+    ESP_LOGI(TAG, "Creating schedule preference with key hash: %u", this->get_object_id_hash());
+    if (!sched_array_pref_) {
+        this->schedule_empty_ = true;
+        this->schedule_valid_ = false;
+        return;
+    }
+    sched_array_pref_->create_preference(this->get_object_id_hash());
+    ESP_LOGV(TAG, "Schedule preference created successfully.");
 }
 
 // Function to load the array from NVS memory
@@ -212,6 +308,8 @@ void Schedule::load_schedule_from_pref_() {
     ESP_LOGV(TAG, "Loading schedule from preferences");
     if (!sched_array_pref_) {
         ESP_LOGW(TAG, "No schedule preference object available to load from");
+        this->schedule_empty_ = true;
+        this->schedule_valid_ = false;
         return;
     } 
     // Create temporary buffer to load data
@@ -221,9 +319,10 @@ void Schedule::load_schedule_from_pref_() {
     //
     bool ok = this->sched_array_pref_->is_valid();
     //bool ok = false;
- 
+    ESP_LOGV(TAG, "Schedule preference load completed");
    if (!ok) {
        ESP_LOGW(TAG, "Schedule preference data is not valid");
+       this->schedule_empty_ = true;
     }
     else {
         uint8_t *buf = this->sched_array_pref_->data();
@@ -233,6 +332,8 @@ void Schedule::load_schedule_from_pref_() {
             if (temp_buffer[i] == 0xFFFF && temp_buffer[i + 1] == 0xFFFF) {
                 ESP_LOGI(TAG, "Found terminator at index %u; actual schedule size is %u entries", 
                          static_cast<unsigned>(i / 2), static_cast<unsigned>(i));
+                // Schedule is empty if terminator is at the very first position
+                this->schedule_empty_ = (i == 0);
                 ok=true;
                 break;
             }
@@ -252,12 +353,15 @@ void Schedule::load_schedule_from_pref_() {
         for (size_t i = 0; i < this->schedule_max_size_; ++i) {
             this->schedule_times_in_minutes_.push_back(temp_buffer[i]);
         }
-        
+        this->schedule_empty_ = false;
+        this->schedule_valid_ = true;   
         ESP_LOGI(TAG, "Loaded %u uint16_t values from preferences", 
                  static_cast<unsigned>(this->schedule_times_in_minutes_.size()));
+        
     } else {
         // No stored data: use YAML initial values and persist them
         this->schedule_times_in_minutes_ = this->factory_reset_values_;
+        this->schedule_empty_ = true;
         if (this->schedule_times_in_minutes_.size() > this->schedule_max_size_) {
             this->schedule_times_in_minutes_.resize(this->schedule_max_size_);
         }
@@ -272,6 +376,7 @@ void Schedule::load_schedule_from_pref_() {
         ESP_LOGI(TAG, "No stored values; using factory defaults and saving them");
     }
     // Debug log values
+    log_state_flags_();
     for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); ++i) {
         ESP_LOGD(TAG, "schedule_times_in_minutes_[%u] = %u", static_cast<unsigned>(i), this->schedule_times_in_minutes_[i]);
     } 
@@ -297,11 +402,13 @@ void Schedule::save_schedule_to_pref_() {
 void Schedule::setup_schedule_retrieval_service_() {
      if (this->ha_schedule_entity_id_.empty()) {
         ESP_LOGE(TAG, "Cannot trigger retrieval: schedule_entity_id is empty.");
+        ha_connected_ = false;
         return;
     }
     #ifdef USE_API
         if (esphome::api::global_api_server == nullptr) {
             ESP_LOGW(TAG, "APIServer not available");
+            ha_connected_ = false;
         return;
         }
         ESP_LOGI(TAG, "C++ component triggering schedule.get_schedule for %s...", ha_schedule_entity_id_.c_str());
@@ -445,6 +552,9 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     std::vector<uint16_t> work_buffer_;
     ESP_LOGI(TAG, "Processing received schedule data into integer array for %s...", this->ha_schedule_entity_id_.c_str());
     
+    // Mark schedule as invalid at start of processing
+    this->schedule_valid_ = false;
+    
     // Safetycheck that the expected entity is present in the response
     if (!response["response"][this->ha_schedule_entity_id_.c_str()].is<JsonObjectConst>()) {
         ESP_LOGW(TAG, "Expected entity '%s' not found in response", this->ha_schedule_entity_id_.c_str());
@@ -565,6 +675,9 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     work_buffer_.push_back(0xFFFF);
     work_buffer_.push_back(0xFFFF);
     
+    // Check if schedule is empty (only contains terminator)
+    bool is_empty = (work_buffer_.size() == 2);
+    
     // Check size against max size
     if (work_buffer_.size() > this->schedule_max_size_) {
         ESP_LOGW(TAG, "Received schedule (%u entries) exceeds max size (%u); truncating.", 
@@ -603,10 +716,17 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                  sensor->get_label().c_str(), static_cast<unsigned>(data_work_buffers[sensor_idx].size()));
     }
 
-    
     ESP_LOGI(TAG, "Schedule processing complete.");
     // Persist the new schedule to flash    
     save_schedule_to_pref_();
+    // Mark schedule as valid after successful processing
+    this->schedule_valid_ = true;
+    // Set schedule_empty based on whether we found any schedule entries
+    this->schedule_empty_ = is_empty;
+    if (is_empty) {
+        ESP_LOGI(TAG, "Schedule is empty (no time entries found).");
+    }
+    log_state_flags_();
 }
 // Method to add a data item to the schedule's data items list
 void Schedule::add_data_item(const std::string &label, uint16_t value) {

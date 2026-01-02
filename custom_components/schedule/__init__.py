@@ -9,13 +9,14 @@ from esphome.const import (
     ICON_RULER,
     CONF_ICON,
     CONF_ENTITY_CATEGORY,
-
+    CONF_TIME_ID,
 )
 from esphome.components import sensor
 from esphome.components import binary_sensor
 from esphome.components import switch
 from esphome.components import text_sensor
 from esphome.components import select
+from esphome.components import time
 
 
 
@@ -37,6 +38,7 @@ CONF_SCHEDULE_SWITCH = "schedule_switch"
 CONF_CURRENT_EVENT = "current_event"
 CONF_NEXT_EVENT = "next_event"
 CONF_MODE_SELECT = "mode_selector"
+CONF_UPDATE_ON_RECONNECT = "update_schedule_from_ha_on_reconnect"
 
 # Define the namespace and the C++ class name
 schedule_ns = cg.esphome_ns.namespace("schedule")
@@ -126,6 +128,10 @@ CONFIG_SCHEMA = (
                 ),
                 key=CONF_NAME,
             ),
+            cv.GenerateID(CONF_TIME_ID): cv.All(
+                        cv.requires_component("time"), cv.use_id(time.RealTimeClock)
+            ),
+            cv.Optional(CONF_UPDATE_ON_RECONNECT, default=False): cv.boolean,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -215,7 +221,13 @@ async def to_code(config):
         await cg.register_component(mode_select_var, mode_select_conf)
         cg.add(var.set_mode_select(mode_select_var))
 
- 
+    # Set time component if configured
+    if CONF_TIME_ID in config:
+        time_var = await cg.get_variable(config[CONF_TIME_ID])
+        cg.add(var.set_time(time_var))
+    
+    # Set update on reconnect flag
+    cg.add(var.set_update_schedule_on_reconnect(config[CONF_UPDATE_ON_RECONNECT]))
         
     await cg.register_component(var, config)
 

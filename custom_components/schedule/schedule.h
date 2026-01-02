@@ -12,6 +12,7 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/select/select.h"
+#include "esphome/components/time/real_time_clock.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -72,6 +73,7 @@ class Schedule : public EntityBase, public Component  {
   void set_schedule_entity_id(const std::string &ha_schedule_entity_id);
   void set_max_schedule_size(size_t size);
   void set_max_schedule_entries(size_t entries);
+  void set_update_schedule_on_reconnect(bool update) { this->update_on_reconnect_ = update; }
    /// Trigger a schedule.get_schedule request.
   void request_schedule();
   void create_schedule_preference();
@@ -122,6 +124,11 @@ class Schedule : public EntityBase, public Component  {
     this->next_event_sensor_ = sensor;
   }
   
+  // Set the time component for time validation
+  void set_time(time::RealTimeClock *time) {
+    this->time_ = time;
+  }
+  
   // Update the switch indicator state
   void update_switch_indicator(bool state) {
     if (this->switch_indicator_ != nullptr) {
@@ -146,6 +153,9 @@ class Schedule : public EntityBase, public Component  {
  private:
   uint16_t  timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
+  void check_rtc_time_valid_();  // Check and update RTC time validity
+  void check_ha_connection_();   // Check and update Home Assistant connection state
+  void log_state_flags_();       // Log verbose state of boolean flags
   ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
   size_t schedule_max_entries_{0};
@@ -161,7 +171,16 @@ class Schedule : public EntityBase, public Component  {
   text_sensor::TextSensor *current_event_sensor_{nullptr};
   text_sensor::TextSensor *next_event_sensor_{nullptr};
   bool ha_connected_{false};
+  bool ha_connected_once_{false};
+  bool rtc_time_valid_{false};
+  bool schedule_valid_{false};
+  bool schedule_empty_{true};
+  bool update_on_reconnect_{false};
   uint32_t last_connection_check_{0};
+  uint32_t last_time_check_{0};
+  uint32_t last_schedule_request_time_{0};
+  uint32_t last_state_log_time_{0};
+  time::RealTimeClock *time_{nullptr};
 protected:
 
   // Action object that sends the HA service call.
