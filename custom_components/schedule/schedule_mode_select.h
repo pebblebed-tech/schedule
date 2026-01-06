@@ -8,8 +8,15 @@
 namespace esphome {
 namespace schedule {
 
+// Forward declaration
+class Schedule;
+
 class ScheduleModeSelect : public select::Select, public Component {
  public:
+  void set_on_value_callback(std::function<void(const std::string&)> &&callback) {
+    this->on_value_callback_ = callback;
+  }
+  
   void setup() override {
     this->pref_ = global_preferences->make_preference<uint8_t>(this->get_object_id_hash());
     uint8_t index;
@@ -24,8 +31,13 @@ class ScheduleModeSelect : public select::Select, public Component {
         this->publish_state("Manual Off");
       }
     }
+    // Notify via callback with the published state
+    if (this->on_value_callback_ && this->has_state()) {
+      this->on_value_callback_(this->current_option());
+    }
   }
-
+  
+ 
  protected:
   void control(const std::string &value) override {
     // Save the selected option index
@@ -38,9 +50,15 @@ class ScheduleModeSelect : public select::Select, public Component {
     }
     
     this->publish_state(value);
+    
+    // Notify via callback
+    if (this->on_value_callback_) {
+      this->on_value_callback_(value);
+    }
   }
 
   ESPPreferenceObject pref_;
+  std::function<void(const std::string&)> on_value_callback_;
 };
 
 }  // namespace schedule

@@ -200,6 +200,9 @@ async def to_code(config):
     # Set internal to true by default
     cg.add(switch_var.set_internal(True))
     
+    # Set restore mode to always restore OFF
+    cg.add(switch_var.set_restore_mode(switch.SwitchRestoreMode.SWITCH_ALWAYS_OFF))
+    
     # Link switch to schedule component
     cg.add(switch_var.set_schedule(var))
     cg.add(var.set_schedule_switch(switch_var))

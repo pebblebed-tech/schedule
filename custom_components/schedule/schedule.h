@@ -22,6 +22,28 @@
 namespace esphome {
 namespace schedule {
 
+// Schedule mode enum matching SCHEDULE_MODE_OPTIONS in Python
+enum ScheduleMode {
+  SCHEDULE_MODE_MANUAL_OFF = 0,
+  SCHEDULE_MODE_EARLY_OFF = 1,
+  SCHEDULE_MODE_AUTO = 2,
+  SCHEDULE_MODE_MANUAL_ON = 3,
+  SCHEDULE_MODE_BOOST_ON = 4
+};
+
+// Finite state machine states for loop control
+enum ScheduleState {
+  STATE_NOT_VALID = 0,
+  STATE_INIT = 1,
+  STATE_INIT_OK = 2,
+  STATE_MAN_OFF = 3,
+  STATE_MAN_ON = 4,
+  STATE_RUN_EARLY_OFF = 5,
+  STATE_RUN_BOOST = 6,
+  STATE_RUN_ON = 7,
+  STATE_RUN_OFF = 8
+};
+
 // Forward declarations
 class Schedule;
 class ScheduleModeSelect;
@@ -107,11 +129,9 @@ class Schedule : public EntityBase, public Component  {
     this->schedule_switch_ = schedule_switch; 
   }
   
-  void set_mode_select(ScheduleModeSelect *mode_select) { 
-    this->mode_select_ = mode_select; 
-  }
-    // Set the mode select option programmatically
-  void set_mode_option(const std::string &option);
+  void set_mode_select(ScheduleModeSelect *mode_select);
+    // Set the mode select option programmatically using enum
+  void set_mode_option(ScheduleMode mode);
   
   // Called when mode select changes from Home Assistant
   void on_mode_changed(const std::string &mode);
@@ -156,6 +176,13 @@ class Schedule : public EntityBase, public Component  {
   void check_rtc_time_valid_();  // Check and update RTC time validity
   void check_ha_connection_();   // Check and update Home Assistant connection state
   void log_state_flags_();       // Log verbose state of boolean flags
+  void initialize_schedule_operation_();  // Initialize current and next event times
+  void display_current_next_events_(std::string current_text, std::string next_text); // Update current/next event sensors
+  int16_t find_current_event_(uint16_t current_time_minutes);  // Find index of current active event (on or off)
+  uint16_t time_to_minutes_(auto current_now); // Helper to convert time to minutes from week start
+  std::string format_event_time_(uint16_t time_minutes); // Format event time for logging
+  std::string create_event_string_(uint16_t event_raw); // Create event string for sensors
+  uint16_t get_current_week_minutes_(); // Get current time in minutes from week start
   ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
   size_t schedule_max_entries_{0};
@@ -170,6 +197,8 @@ class Schedule : public EntityBase, public Component  {
   ScheduleModeSelect *mode_select_{nullptr};
   text_sensor::TextSensor *current_event_sensor_{nullptr};
   text_sensor::TextSensor *next_event_sensor_{nullptr};
+  ScheduleMode current_mode_{SCHEDULE_MODE_MANUAL_OFF};  // Current schedule mode from select
+  ScheduleState current_state_{STATE_INIT};  // Current FSM state
   bool ha_connected_{false};
   bool ha_connected_once_{false};
   bool rtc_time_valid_{false};
@@ -181,6 +210,11 @@ class Schedule : public EntityBase, public Component  {
   uint32_t last_schedule_request_time_{0};
   uint32_t last_state_log_time_{0};
   time::RealTimeClock *time_{nullptr};
+  uint16_t current_event_raw_{0};  
+  uint16_t next_event_raw_{0};
+  int16_t current_event_index_{-1};
+  int16_t next_event_index_{-1};
+  bool event_switch_state_{false};  // true=on, false=off
 protected:
 
   // Action object that sends the HA service call.

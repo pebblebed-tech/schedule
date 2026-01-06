@@ -33,6 +33,10 @@ external_components:
 # Enable logging
 logger:
   level: VERY_VERBOSE
+  logs:
+    light.addressable: DEBUG
+    api.service: DEBUG
+
 # Enable Home Assistant API
 api:
    # password: !secret api_password
@@ -112,7 +116,10 @@ schedule:
   schedule_switch:
     id: test_schedule_switch
     name: "Test Schedule Switch"
-    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - logger.log: "Test Schedule Switch Turned ON"
+    on_turn_off:
+      - logger.log: "Test Schedule Switch Turned OFF"
   current_event:
     name: "Current Event"
   next_event:
