@@ -131,6 +131,10 @@ schedule:
       label: "temp"
       item_type: float
       name: "Schedule Temperature"
+      variable_behavior_when_off: OFF_VALUE
+      variable_off_value: 21.5
+      variable_behavior_in_manual_on: MANUAL_VALUE
+      variable_manual_on_value: 22.0
 
 
 

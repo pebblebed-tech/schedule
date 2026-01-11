@@ -32,6 +32,10 @@ CONF_HA_SCHEDULE_ENTITY_ID = "ha_schedule_entity_id"
 CONF_SCHEDULE_VARS = "schedule_variables"
 CONF_ITEM_LABEL = "label"
 CONF_ITEM_TYPE = "item_type"
+CONF_OFF_BEHAVIOR = "variable_behavior_when_off"
+CONF_OFF_VALUE = "variable_off_value"
+CONF_MANUAL_BEHAVIOR = "variable_behavior_in_manual_on"
+CONF_MANUAL_VALUE = "variable_manual_on_value"
 CONF_UPDATE_BUTTON = "schedule_update_button"
 CONF_SCHEDULE_SWITCH_IND = "schedule_switch_indicator"
 CONF_SCHEDULE_SWITCH = "schedule_switch"
@@ -77,15 +81,40 @@ ITEM_TYPE_BYTES = {
     3: 4,  # float
 }
 
+# Off behavior modes for data sensors
+OFF_BEHAVIORS = {
+    "NAN": 0,
+    "LAST_ON_VALUE": 1,
+    "OFF_VALUE": 2,
+}
+
+# Manual behavior modes for data sensors
+MANUAL_BEHAVIORS = {
+    "NAN": 0,
+    "LAST_ON_VALUE": 1,
+    "MANUAL_VALUE": 2,
+}
+
+def validate_manual_value(config):
+    """Validate that manual_value is present when manual_behavior is MANUAL_VALUE."""
+    if config.get(CONF_MANUAL_BEHAVIOR) == "MANUAL_VALUE":
+        if CONF_MANUAL_VALUE not in config:
+            raise cv.Invalid(f"{CONF_MANUAL_VALUE} is required when {CONF_MANUAL_BEHAVIOR} is MANUAL_VALUE")
+    return config
+
 # Schema for individual data sensor
-DATA_SENSOR_SCHEMA = sensor.sensor_schema(
-    DataSensor,
-    accuracy_decimals=1,
-).extend({
+DATA_SENSOR_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(DataSensor),
     cv.Required(CONF_ITEM_LABEL): cv.string,
     cv.Required(CONF_ITEM_TYPE): cv.enum(ITEM_TYPES, lower=True, space="_"),
-})
+    cv.Optional(CONF_OFF_BEHAVIOR, default="NAN"): cv.enum(OFF_BEHAVIORS, upper=True, space="_"),
+    cv.Optional(CONF_OFF_VALUE, default=0.0): cv.float_,
+    cv.Optional(CONF_MANUAL_BEHAVIOR, default="NAN"): cv.enum(MANUAL_BEHAVIORS, upper=True, space="_"),
+    cv.Optional(CONF_MANUAL_VALUE): cv.float_,
+}).extend(sensor.sensor_schema(
+    DataSensor,
+    accuracy_decimals=1,
+)).add_extra(validate_manual_value)
 
 # Define configuration schema, requiring an entity_id
 CONFIG_SCHEMA = (
@@ -178,6 +207,28 @@ async def to_code(config):
             cg.add(sens.set_item_type(item_type))
             cg.add(sens.set_max_schedule_data_entries(config[CONF_MAX_SCHEDULE_SIZE]))
             cg.add(sens.set_array_preference(sensor_array_pref))
+            
+            # Set off behavior and off value
+            off_behavior_name = sensor_config[CONF_OFF_BEHAVIOR]
+            # Map YAML names to C++ enum values
+            off_behavior_enum_map = {
+                "NAN": "DATA_SENSOR_OFF_BEHAVIOR_NAN",
+                "LAST_ON_VALUE": "DATA_SENSOR_OFF_BEHAVIOR_LAST_ON_VALUE",
+                "OFF_VALUE": "DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE",
+            }
+            cg.add(sens.set_off_behavior(cg.RawExpression(f'esphome::schedule::{off_behavior_enum_map[off_behavior_name]}')))
+            cg.add(sens.set_off_value(sensor_config[CONF_OFF_VALUE]))
+            
+            # Set manual behavior and manual value
+            manual_behavior_name = sensor_config[CONF_MANUAL_BEHAVIOR]
+            manual_behavior_enum_map = {
+                "NAN": "DATA_SENSOR_MANUAL_BEHAVIOR_NAN",
+                "LAST_ON_VALUE": "DATA_SENSOR_MANUAL_BEHAVIOR_LAST_ON_VALUE",
+                "MANUAL_VALUE": "DATA_SENSOR_MANUAL_BEHAVIOR_MANUAL_VALUE",
+            }
+            cg.add(sens.set_manual_behavior(cg.RawExpression(f'esphome::schedule::{manual_behavior_enum_map[manual_behavior_name]}')))
+            if CONF_MANUAL_VALUE in sensor_config:
+                cg.add(sens.set_manual_value(sensor_config[CONF_MANUAL_VALUE]))
             
             # Add data item to schedule component
             cg.add(var.add_data_item(label, item_type))

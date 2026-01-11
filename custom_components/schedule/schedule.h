@@ -16,6 +16,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <map>
 #include "array_preference.h"
 #include "data_sensor.h"
 
@@ -75,9 +76,26 @@ class ScheduleSwitch : public switch_::Switch, public Component {
  public:
   void set_schedule(Schedule *schedule) { this->schedule_ = schedule; }
   
+  // Store current sensor values before triggering
+  void set_sensor_value(const std::string &label, float value) {
+    this->sensor_values_[label] = value;
+  }
+  
+  // Get sensor value by label (returns undefined if not found)
+  float get_sensor_value(const std::string &label) const {
+    auto it = this->sensor_values_.find(label);
+    return (it != this->sensor_values_.end()) ? it->second : NAN;
+  }
+  
+  // Check if sensor value exists
+  bool has_sensor_value(const std::string &label) const {
+    return this->sensor_values_.find(label) != this->sensor_values_.end();
+  }
+  
  protected:
   void write_state(bool state) override;
   Schedule *schedule_{nullptr};
+  std::map<std::string, float> sensor_values_;
 };
 
 // Schedule class
@@ -159,6 +177,8 @@ class Schedule : public EntityBase, public Component  {
   // Control the schedule switch state
   void set_schedule_switch_state(bool state) {
     if (this->schedule_switch_ != nullptr) {
+      // Update sensor values in the switch before changing state
+      this->update_switch_sensor_values_();
       this->schedule_switch_->publish_state(state);
     }
   }
@@ -183,9 +203,12 @@ class Schedule : public EntityBase, public Component  {
   std::string format_event_time_(uint16_t time_minutes); // Format event time for logging
   std::string create_event_string_(uint16_t event_raw); // Create event string for sensors
   uint16_t get_current_week_minutes_(); // Get current time in minutes from week start
+  void set_data_sensors_(int16_t current_index, bool state, bool manual_override);
+  void update_switch_sensor_values_();  // Update sensor values in the switch before triggering
   ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
   size_t schedule_max_entries_{0};
+
   
   std::vector<uint16_t> schedule_times_in_minutes_; // Use std::vector for runtime sizing
   std::vector<uint16_t> factory_reset_values_= {0xFFFF,0xFFFF}; // Set the MSB to denote end of schedule
@@ -199,6 +222,7 @@ class Schedule : public EntityBase, public Component  {
   text_sensor::TextSensor *next_event_sensor_{nullptr};
   ScheduleMode current_mode_{SCHEDULE_MODE_MANUAL_OFF};  // Current schedule mode from select
   ScheduleState current_state_{STATE_INIT};  // Current FSM state
+  ScheduleState processed_state_{STATE_INIT};  // the last FSM state
   bool ha_connected_{false};
   bool ha_connected_once_{false};
   bool rtc_time_valid_{false};

@@ -15,14 +15,11 @@
 
 
 // TODO: Add error handling for service call failures
+// TODO: Store CONF_HA_SCHEDULE_ENTITY_ID value in preferences and detect if it changes to reload schedule 
+
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
 // TODO: Addcode to manage factory reset of schedule to default empty schedule
 // TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
-// TODO: Add a timer to check to and from times and set a switch and the data_sensors if time is within a scheduled period
-// TODO: In the main loop check for WIFI / API connection status and adjust state machine to ensure when connetion is restored schedule is re-requested
-// TODO: Add state machine to control device behaviour in device loop modes (setup, time_not_valid, no_schedule_stored, normal_connected_on,normal_connected_off, normal_disconnected_on,normal_disconnected_off, Error etc)
-// TODO: Add switch to that is controlled by schedule to & from scheduled times
-// TODO: Add a timer that runs every second to check if we are connected to home assistant
 // TODO: Check that select defaults to manual off on first run and saves to preferences
 // TODO: Ensure schedule_retrieval_service_ is only setup once
 // TODO: Run clang-format on these files
@@ -145,6 +142,7 @@ void Schedule::setup() {
         this->next_event_sensor_->publish_state("Initializing...");
     }
 	this->current_state_ = STATE_NOT_VALID;
+    // Create stuct for holding data sensor current values
 }
 
 void Schedule::loop() {
@@ -242,44 +240,55 @@ void Schedule::loop() {
    
 			// Depending on current mode handle schedule operation
 			//TODO: Add handling for data sensors and switch state changes
-			switch(this->current_state_) {
-				case STATE_MAN_OFF:
-					// In manual off mode, ensure switch is off
-					this->set_schedule_switch_state(false);
-					this->update_switch_indicator(false);
-					this->display_current_next_events_("Manual Off", "");
-					break;
-				case STATE_MAN_ON:
-					// In manual on mode, ensure switch is on
-					this->set_schedule_switch_state(true);
-					this->update_switch_indicator(true);
-					this->display_current_next_events_("Manual On", "");
-					break;
-				case STATE_RUN_EARLY_OFF:
-					this->set_schedule_switch_state(false);
-					this->update_switch_indicator(false);
-					this->display_current_next_events_("Early Off", this->create_event_string_(this->next_event_raw_));
-					break;
-				case STATE_RUN_BOOST:
-					this->set_schedule_switch_state(true);
-					this->update_switch_indicator(true);
-					this->display_current_next_events_("Boost On", this->create_event_string_(this->next_event_raw_));
-					break; 
-				case STATE_RUN_ON:
-					this->set_schedule_switch_state(true);
-					this->update_switch_indicator(true);
-					this->display_current_next_events_(this->create_event_string_(this->current_event_raw_), this->create_event_string_(this->next_event_raw_));
-					break;
-				case STATE_RUN_OFF:
-					this->set_schedule_switch_state(false);
-					this->update_switch_indicator(false);
-					this->display_current_next_events_(this->create_event_string_(this->current_event_raw_), this->create_event_string_(this->next_event_raw_));
-					break;
-
-				default:
-					ESP_LOGW(TAG, "Unknown schedule state: %d", this->current_state_);
-					this->current_state_ = STATE_NOT_VALID;
-			}
+            // Check if state has changed, if so handle the state change
+            if (this->current_state_ != this->processed_state_) {   
+                this->processed_state_ = this->current_state_;  
+                ESP_LOGV(TAG, "Schedule state changed to: %d", this->current_state_);   
+                switch(this->current_state_) {
+                    case STATE_MAN_OFF:
+                    // In manual off mode, ensure switch is off
+                    this->set_schedule_switch_state(false);
+                    this->update_switch_indicator(false);
+                    this->display_current_next_events_("Manual Off", "");
+                    this->set_data_sensors_(this->current_event_index_, false,true);
+                    break;
+                    case STATE_MAN_ON:
+                    // In manual on mode, ensure switch is on
+                    this->set_schedule_switch_state(true);
+                    this->update_switch_indicator(true);
+                    this->display_current_next_events_("Manual On", "");
+                    this->set_data_sensors_(this->current_event_index_, true,true);
+                    break;
+                    case STATE_RUN_EARLY_OFF:
+                    this->set_schedule_switch_state(false);
+                    this->update_switch_indicator(false);
+                    this->display_current_next_events_("Early Off", this->create_event_string_(this->next_event_raw_));
+                    this->set_data_sensors_(this->current_event_index_, false,false);
+                    break;
+                    case STATE_RUN_BOOST:
+                    this->set_schedule_switch_state(true);
+                    this->update_switch_indicator(true);
+                    this->display_current_next_events_("Boost On", this->create_event_string_(this->next_event_raw_));
+                    this->set_data_sensors_(this->current_event_index_, true,false);
+                    break; 
+                    case STATE_RUN_ON:
+                    this->set_schedule_switch_state(true);
+                    this->update_switch_indicator(true);
+                    this->display_current_next_events_(this->create_event_string_(this->current_event_raw_), this->create_event_string_(this->next_event_raw_));
+                    this->set_data_sensors_(this->current_event_index_, true,false);
+                    break;
+                    case STATE_RUN_OFF:
+                    this->set_schedule_switch_state(false);
+                    this->update_switch_indicator(false);
+                    this->display_current_next_events_(this->create_event_string_(this->current_event_raw_), this->create_event_string_(this->next_event_raw_));
+                    this->set_data_sensors_(this->current_event_index_, false,false);
+                    break;
+                    
+                    default:
+                    ESP_LOGW(TAG, "Unknown schedule state: %d", this->current_state_);
+                    this->current_state_ = STATE_NOT_VALID;
+                }
+            }
 				
 			// If not manual states then check for schedule driven changes to current_state_
 			
@@ -529,6 +538,29 @@ void Schedule::display_current_next_events_(std::string current_text, std::strin
 		}
 	}
 }
+
+// Set data sensors based on current event index and switch state
+void Schedule::set_data_sensors_(int16_t event_index, bool switch_state, bool manual_override) {
+    for (auto *sensor : this->data_sensors_) {
+        sensor->apply_state(event_index, switch_state, manual_override);
+    }
+}
+
+// Update sensor values in the switch before triggering automations
+void Schedule::update_switch_sensor_values_() {
+    if (this->schedule_switch_ == nullptr) {
+        return;
+    }
+    
+    // Copy current sensor values to the switch
+    for (auto *sensor : this->data_sensors_) {
+        float current_value = sensor->state;
+        this->schedule_switch_->set_sensor_value(sensor->get_label(), current_value);
+        ESP_LOGV(TAG, "Updated switch sensor value: %s = %.2f", 
+                 sensor->get_label().c_str(), current_value);
+    }
+}
+
 // Initialize schedule operation - find current and next events
 void Schedule::initialize_schedule_operation_() {
     ESP_LOGI(TAG, "Initializing schedule operation...");
@@ -551,9 +583,9 @@ void Schedule::initialize_schedule_operation_() {
              now.day_of_week, now.hour, now.minute, current_time_minutes);
     
     // Find current active event
-    uint16_t current_event_index = this->find_current_event_(current_time_minutes);
+    current_event_index_ = this->find_current_event_(current_time_minutes);
     // we should not get here with an invalid index as schedule is valid
-    if (current_event_index < 0) {
+    if (current_event_index_ < 0) {
         ESP_LOGW(TAG, "No current event found, schedule is empty");
         // Set flags accordingly
         this->schedule_empty_ = true;
@@ -564,11 +596,11 @@ void Schedule::initialize_schedule_operation_() {
 
     // Now set up the current and next event details
    
-    this->current_event_raw_ = this->schedule_times_in_minutes_[current_event_index];
+    this->current_event_raw_ = this->schedule_times_in_minutes_[current_event_index_];
     uint16_t current_event_time = current_event_raw_ & TIME_MASK;
-    this->next_event_raw_ = this->schedule_times_in_minutes_[current_event_index + 1];
-    this->next_event_index_ = current_event_index + 1;
-	ESP_LOGV(TAG,"current_event_raw_: 0x%04X, next_event_raw_: 0x%04X current_event_index: %d, next_event_index: %d", this->current_event_raw_, this->next_event_raw_, current_event_index, this->next_event_index_);
+    this->next_event_raw_ = this->schedule_times_in_minutes_[current_event_index_ + 1];
+    this->next_event_index_ = current_event_index_ + 1;
+	ESP_LOGV(TAG,"current_event_raw_: 0x%04X, next_event_raw_: 0x%04X current_event_index: %d, next_event_index: %d", this->current_event_raw_, this->next_event_raw_, current_event_index_, this->next_event_index_);
     if (this->next_event_raw_ == 0xFFFF) {
         // End of schedule reached of roll over to start of schedule
 // TODO: Need to handle first run when current event is last event in schedule
@@ -584,8 +616,9 @@ void Schedule::initialize_schedule_operation_() {
     bool in_event = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
     this->event_switch_state_ = in_event;
     
+    
     ESP_LOGV(TAG, "Current event index: %d, time: %s, state: %s", 
-             current_event_index, this->format_event_time_(current_event_time).c_str(), in_event ? "ON" : "OFF");
+             current_event_index_, this->format_event_time_(current_event_time).c_str(), in_event ? "ON" : "OFF");
     this->current_state_ = STATE_INIT_OK;
     ESP_LOGD(TAG, "Schedule operation initialized");
 }
@@ -1112,7 +1145,7 @@ void Schedule::log_schedule_data() {
     ESP_LOGV(TAG, "=== Schedule Data Dump ===");
     ESP_LOGV(TAG, "Schedule times count: %u", static_cast<unsigned>(this->schedule_times_in_minutes_.size()));
     
-    // Log schedule times (pairs of from/to)
+     // Log schedule times (pairs of from/to)
     for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i += 2) {
         if (i + 1 < this->schedule_times_in_minutes_.size()) {
             uint16_t from = this->schedule_times_in_minutes_[i];
@@ -1124,12 +1157,15 @@ void Schedule::log_schedule_data() {
                 break;
             }
             
-            // Convert minutes to day and time
+            // Convert minutes to day and time need to mask off msb and bit 14
+            from = from & TIME_MASK;
             uint16_t from_day = from / 1440;
             uint16_t from_minutes = from % 1440;
             uint16_t from_hours = from_minutes / 60;
             uint16_t from_mins = from_minutes % 60;
-            
+
+            // Repeat for "to" time
+            to = to & TIME_MASK;
             uint16_t to_day = to / 1440;
             uint16_t to_minutes = to % 1440;
             uint16_t to_hours = to_minutes / 60;
@@ -1139,15 +1175,15 @@ void Schedule::log_schedule_data() {
             ESP_LOGV(TAG, "Entry %u: From=%s %02u:%02u (%u) To=%s %02u:%02u (%u)", 
                      static_cast<unsigned>(i / 2),
                      day_names[from_day], from_hours, from_mins, from,
-                     day_names[to_day], to_hours, to_mins, to);
+                     day_names[to_day], to_hours, to_mins, to); 
         }
-    }
+    } 
     
     // Log data sensor contents
     ESP_LOGV(TAG, "=== Data Sensors ===");
     ESP_LOGV(TAG, "Number of data sensors: %u", static_cast<unsigned>(this->data_sensors_.size()));
     
-    for (size_t sensor_idx = 0; sensor_idx < this->data_sensors_.size(); ++sensor_idx) {
+     for (size_t sensor_idx = 0; sensor_idx < this->data_sensors_.size(); ++sensor_idx) {
         DataSensor *sensor = this->data_sensors_[sensor_idx];
         ESP_LOGV(TAG, "Sensor %u: Label='%s', Type=%u, Vector Size=%u bytes", 
                  static_cast<unsigned>(sensor_idx),
@@ -1201,7 +1237,7 @@ void Schedule::log_schedule_data() {
                 break;
             }
         }
-    }
+    } 
     
  /*    ESP_LOGV(TAG, "=== End Schedule Data Dump ===");
     this->send_ha_notification_(
