@@ -15,7 +15,10 @@
 
 
 // TODO: Add error handling for service call failures
-// TODO: Store CONF_HA_SCHEDULE_ENTITY_ID value in preferences and detect if it changes to reload schedule 
+// TODO: Check multiple data sensors with different item types
+// TODO: Check multiple schedule switch in a single yaml file
+// TODO: refactor so the schedule switch apprears under switches in yaml as schedule platform
+
 
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
 // TODO: Addcode to manage factory reset of schedule to default empty schedule
@@ -122,6 +125,15 @@ void Schedule::setup() {
     this->create_schedule_preference();
     // Now load from preference;
     this->load_schedule_from_pref_();
+    
+    // Load stored entity ID and check if it changed
+    this->load_entity_id_from_pref_();
+    uint32_t current_hash = fnv1_hash(this->ha_schedule_entity_id_);
+    this->entity_id_changed_ = (this->stored_entity_id_hash_ != current_hash);
+    if (this->entity_id_changed_) {
+        ESP_LOGI(TAG, "Schedule entity ID changed (hash: 0x%08X -> 0x%08X)",
+                 this->stored_entity_id_hash_, current_hash);
+    }
 
     this->setup_schedule_retrieval_service_();
     this->setup_notification_service_();
@@ -129,10 +141,20 @@ void Schedule::setup() {
     this->ha_connected_ = api::global_api_server->is_connected();
     ESP_LOGI(TAG, "Initial Home Assistant API connection status: %s", this->ha_connected_ ? "connected" : "disconnected");
     this->last_connection_check_ = millis();
-   // If get schedule on reconnect is set and we are connected request schedule or if schedule is not valid
-    if ((this->ha_connected_ && this->update_on_reconnect_) || (this->ha_connected_ && this->schedule_valid_ == false)) {
+   // If get schedule on reconnect is set and we are connected request schedule or if schedule is not valid or entity ID changed
+    if ((this->ha_connected_ && this->update_on_reconnect_) || 
+        (this->ha_connected_ && this->schedule_valid_ == false) ||
+        (this->ha_connected_ && this->entity_id_changed_)) {
         ESP_LOGD(TAG, "Requesting update schedule from Home Assistant...");
+        if (this->entity_id_changed_) {
+            // Invalidate old schedule since it's for a different entity
+            this->schedule_valid_ = false;
+            this->schedule_empty_ = true;
+            this->save_entity_id_to_pref_();
+        }
         this->request_schedule();
+    } else if (this->entity_id_changed_) {
+        ESP_LOGW(TAG, "Entity ID changed but Home Assistant not connected - using old schedule until connected");
     }
     
     if (this->current_event_sensor_ != nullptr) {
@@ -173,8 +195,19 @@ void Schedule::loop() {
         if (now - this->last_connection_check_ >= check_interval) {
             this->last_connection_check_ = now;
             this->check_ha_connection_();
-            if ((this->ha_connected_ && this->update_on_reconnect_) || (this->ha_connected_ && this->schedule_valid_ == false)) {
+            
+            if ((this->ha_connected_ && this->update_on_reconnect_) || 
+                (this->ha_connected_ && this->schedule_valid_ == false) ||
+                (this->ha_connected_ && this->entity_id_changed_)) {
                 ESP_LOGI(TAG, "Reconnected to Home Assistant, requesting schedule update...");
+                if (this->entity_id_changed_) {
+                    ESP_LOGI(TAG, "Entity ID changed (hash: 0x%08X -> 0x%08X), invalidating old schedule",
+                             this->stored_entity_id_hash_, fnv1_hash(this->ha_schedule_entity_id_));
+                    // Invalidate old schedule since it's for a different entity
+                    this->schedule_valid_ = false;
+                    this->schedule_empty_ = true;
+                    this->save_entity_id_to_pref_();
+                }
                 this->request_schedule();
             }
             // If not connected and the schedule is not valid, skip rest of loop
@@ -239,7 +272,7 @@ void Schedule::loop() {
 			}
    
 			// Depending on current mode handle schedule operation
-			//TODO: Add handling for data sensors and switch state changes
+
             // Check if state has changed, if so handle the state change
             if (this->current_state_ != this->processed_state_) {   
                 this->processed_state_ = this->current_state_;  
@@ -290,7 +323,6 @@ void Schedule::loop() {
                 }
             }
 				
-			// If not manual states then check for schedule driven changes to current_state_
 			
 			// Get current time in minutes
 			auto now_time = this->time_->now();
@@ -616,11 +648,97 @@ void Schedule::initialize_schedule_operation_() {
     bool in_event = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
     this->event_switch_state_ = in_event;
     
+    // Initialize last_on_value_ for each data sensor by searching backwards for the most recent ON event
+    this->initialize_sensor_last_on_values_(current_event_index_);
     
     ESP_LOGV(TAG, "Current event index: %d, time: %s, state: %s", 
              current_event_index_, this->format_event_time_(current_event_time).c_str(), in_event ? "ON" : "OFF");
     this->current_state_ = STATE_INIT_OK;
     ESP_LOGD(TAG, "Schedule operation initialized");
+}
+
+// Initialize last_on_value_ for each data sensor by finding the most recent ON event
+void Schedule::initialize_sensor_last_on_values_(int16_t current_event_index) {
+    ESP_LOGV(TAG, "Initializing sensor last_on_value_ from schedule history");
+    
+    // Search backwards from current event to find the most recent ON event
+    // Start from current event and work backwards
+    int16_t search_index = current_event_index;
+    
+    // If current event is an ON event, use it
+    if ((this->schedule_times_in_minutes_[search_index] & SWITCH_STATE_BIT) != 0) {
+        ESP_LOGV(TAG, "Current event is ON, using it for last_on_value_ initialization");
+        uint16_t data_index = search_index / 2;
+        for (auto *sensor : this->data_sensors_) {
+            float value = sensor->get_sensor_value(data_index);
+            sensor->set_last_on_value(value);
+            ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from current ON event at index %d",
+                     sensor->get_label().c_str(), value, search_index);
+        }
+        return;
+    }
+    
+    // Current event is OFF, search backwards for previous ON event
+    search_index--;
+    
+    // Search backwards through this week's schedule
+    while (search_index >= 0) {
+        uint16_t event_raw = this->schedule_times_in_minutes_[search_index];
+        
+        // Check if this is an ON event
+        if ((event_raw & SWITCH_STATE_BIT) != 0) {
+            ESP_LOGV(TAG, "Found previous ON event at index %d", search_index);
+            uint16_t data_index = search_index / 2;
+            for (auto *sensor : this->data_sensors_) {
+                float value = sensor->get_sensor_value(data_index);
+                sensor->set_last_on_value(value);
+                ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from ON event at index %d",
+                         sensor->get_label().c_str(), value, search_index);
+            }
+            return;
+        }
+        search_index--;
+    }
+    
+    // No ON event found in current week, search from end of schedule backwards (previous week rollback)
+    ESP_LOGV(TAG, "No ON event found in current week, searching from end of schedule");
+    
+    // Find the last valid entry in the schedule
+    int16_t last_index = -1;
+    for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
+        if (this->schedule_times_in_minutes_[i] == 0xFFFF) {
+            last_index = i - 1;
+            break;
+        }
+    }
+    
+    if (last_index < 0) {
+        ESP_LOGW(TAG, "Could not find end of schedule, cannot initialize last_on_value_");
+        return;
+    }
+    
+    // Search backwards from end of schedule
+    search_index = last_index;
+    while (search_index >= 0) {
+        uint16_t event_raw = this->schedule_times_in_minutes_[search_index];
+        
+        // Check if this is an ON event
+        if ((event_raw & SWITCH_STATE_BIT) != 0) {
+            ESP_LOGV(TAG, "Found previous week's ON event at index %d", search_index);
+            uint16_t data_index = search_index / 2;
+            for (auto *sensor : this->data_sensors_) {
+                float value = sensor->get_sensor_value(data_index);
+                sensor->set_last_on_value(value);
+                ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from previous week ON event at index %d",
+                         sensor->get_label().c_str(), value, search_index);
+            }
+            return;
+        }
+        search_index--;
+    }
+    
+    // No ON event found in entire schedule
+    ESP_LOGW(TAG, "No ON event found in entire schedule, last_on_value_ remains NaN");
 }
 
 // Helper function to convert "HH:MM:SS" or "HH:MM" to minutes from start of day
@@ -670,6 +788,32 @@ bool Schedule::isValidTime_(const JsonVariantConst &time_obj) const {
     return false;
 }
 
+// Load stored entity ID hash from preferences
+void Schedule::load_entity_id_from_pref_() {
+    // Create a preference hash for entity ID storage
+    uint32_t entity_pref_hash = fnv1_hash("entity_id") ^ this->get_object_id_hash();
+    
+    auto restore = global_preferences->make_preference<uint32_t>(entity_pref_hash);
+    
+    if (restore.load(&this->stored_entity_id_hash_)) {
+        ESP_LOGV(TAG, "Loaded stored entity ID hash from preferences: 0x%08X", this->stored_entity_id_hash_);
+    } else {
+        this->stored_entity_id_hash_ = 0;
+        ESP_LOGV(TAG, "No stored entity ID hash found in preferences");
+    }
+}
+
+// Save current entity ID hash to preferences
+void Schedule::save_entity_id_to_pref_() {
+    uint32_t entity_pref_hash = fnv1_hash("entity_id") ^ this->get_object_id_hash();
+    uint32_t current_hash = fnv1_hash(this->ha_schedule_entity_id_);
+    
+    auto restore = global_preferences->make_preference<uint32_t>(entity_pref_hash);
+    restore.save(&current_hash);
+    this->stored_entity_id_hash_ = current_hash;
+    
+    ESP_LOGV(TAG, "Saved entity ID hash to preferences: 0x%08X", current_hash);
+}
 
 // Create the schedule preference object
 void Schedule::create_schedule_preference() {

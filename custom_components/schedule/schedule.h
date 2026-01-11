@@ -197,6 +197,7 @@ class Schedule : public EntityBase, public Component  {
   void check_ha_connection_();   // Check and update Home Assistant connection state
   void log_state_flags_();       // Log verbose state of boolean flags
   void initialize_schedule_operation_();  // Initialize current and next event times
+  void initialize_sensor_last_on_values_(int16_t current_event_index);  // Initialize last_on_value_ for each sensor
   void display_current_next_events_(std::string current_text, std::string next_text); // Update current/next event sensors
   int16_t find_current_event_(uint16_t current_time_minutes);  // Find index of current active event (on or off)
   uint16_t time_to_minutes_(auto current_now); // Helper to convert time to minutes from week start
@@ -239,6 +240,12 @@ class Schedule : public EntityBase, public Component  {
   int16_t current_event_index_{-1};
   int16_t next_event_index_{-1};
   bool event_switch_state_{false};  // true=on, false=off
+  uint32_t stored_entity_id_hash_{0};  // Hash of previously stored entity ID from preferences
+  bool entity_id_changed_{false};  // Set once in setup() if entity ID changed from stored preference
+  
+  // Entity ID preference management
+  void load_entity_id_from_pref_();
+  void save_entity_id_to_pref_();
 protected:
 
   // Action object that sends the HA service call.

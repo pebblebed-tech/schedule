@@ -40,33 +40,6 @@ void DataSensor::setup() {
 
 void DataSensor::dump_config() {
   size_t array_size = this->array_pref_ ? this->array_pref_->size() : 0;
-  const char* off_behavior_str;
-  switch (this->off_behavior_) {
-    case DATA_SENSOR_OFF_BEHAVIOR_LAST_ON_VALUE:
-      off_behavior_str = "LAST_ON_VALUE";
-      break;
-    case DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE:
-      off_behavior_str = "OFF_VALUE";
-      break;
-    case DATA_SENSOR_OFF_BEHAVIOR_NAN:
-    default:
-      off_behavior_str = "NAN";
-      break;
-  }
-  
-  const char* manual_behavior_str;
-  switch (this->manual_behavior_) {
-    case DATA_SENSOR_MANUAL_BEHAVIOR_LAST_ON_VALUE:
-      manual_behavior_str = "LAST_ON_VALUE";
-      break;
-    case DATA_SENSOR_MANUAL_BEHAVIOR_MANUAL_VALUE:
-      manual_behavior_str = "MANUAL_VALUE";
-      break;
-    case DATA_SENSOR_MANUAL_BEHAVIOR_NAN:
-    default:
-      manual_behavior_str = "NAN";
-      break;
-  }
   
   ESP_LOGCONFIG(TAG_DATA_SENSOR, "DataSensor '%s':", this->get_object_id().c_str());
   ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Label: '%s'", this->get_label().c_str());
@@ -74,13 +47,37 @@ void DataSensor::dump_config() {
   ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Max Schedule Entries: %u", static_cast<unsigned>(this->max_schedule_data_entries_));
   ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Data Vector Size: %u bytes", static_cast<unsigned>(this->data_vector_.size()));
   ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Array Pref Size: %u bytes", static_cast<unsigned>(array_size));
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Off Behavior: %s", off_behavior_str);
+  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Off Behavior: %s", this->get_off_behavior_string());
   if (this->off_behavior_ == DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE) {
     ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Off Value: %.2f", this->off_value_);
   }
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Manual Behavior: %s", manual_behavior_str);
+  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Manual Behavior: %s", this->get_manual_behavior_string());
   if (this->manual_behavior_ == DATA_SENSOR_MANUAL_BEHAVIOR_MANUAL_VALUE) {
     ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Manual Value: %.2f", this->manual_value_);
+  }
+}
+
+const char* DataSensor::get_off_behavior_string() const {
+  switch (this->off_behavior_) {
+    case DATA_SENSOR_OFF_BEHAVIOR_LAST_ON_VALUE:
+      return "LAST_ON_VALUE";
+    case DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE:
+      return "OFF_VALUE";
+    case DATA_SENSOR_OFF_BEHAVIOR_NAN:
+    default:
+      return "NAN";
+  }
+}
+
+const char* DataSensor::get_manual_behavior_string() const {
+  switch (this->manual_behavior_) {
+    case DATA_SENSOR_MANUAL_BEHAVIOR_LAST_ON_VALUE:
+      return "LAST_ON_VALUE";
+    case DATA_SENSOR_MANUAL_BEHAVIOR_MANUAL_VALUE:
+      return "MANUAL_VALUE";
+    case DATA_SENSOR_MANUAL_BEHAVIOR_NAN:
+    default:
+      return "NAN";
   }
 }
 
@@ -153,11 +150,7 @@ void DataSensor::apply_state(int16_t event_index, bool switch_state, bool manual
   
   // Handle auto ON state
   if (switch_state) {
-    if (event_index % 2 != 0) {
-      ESP_LOGW(TAG_DATA_SENSOR, "Sensor '%s': Invalid event index %d for ON state", 
-               this->get_name().c_str(), event_index);
-      return;
-    }
+    
     ESP_LOGV(TAG_DATA_SENSOR, "Sensor '%s': Setting value for ON state at index %d", 
              this->get_name().c_str(), event_index);
     uint16_t data_index = event_index / 2;
@@ -292,7 +285,8 @@ void DataSensor::publish_value(float value) {
   }
   
 }
-void DataSensor::get_and_publish_sensor_value(size_t index) {
+
+float DataSensor::get_sensor_value(size_t index) {
   // Calculate bytes per item and actual vector index
   size_t actual_index = index * this->get_bytes_for_type(this->item_type_);
 
@@ -301,7 +295,7 @@ void DataSensor::get_and_publish_sensor_value(size_t index) {
     ESP_LOGE(TAG_DATA_SENSOR, "Index %u out of bounds for sensor '%s' (max: %u)", 
              static_cast<unsigned>(index), this->get_label().c_str(), 
              static_cast<unsigned>(this->data_vector_.size() / this->get_bytes_for_type(this->item_type_)));
-    return;
+    return NAN;
   }
 
   float value_as_float = 0.0f;
@@ -325,19 +319,24 @@ void DataSensor::get_and_publish_sensor_value(size_t index) {
       break;
     }
     case 3: {  // float
-      std::memcpy(&value_as_float, &this->data_vector_[actual_index], sizeof(value_as_float));
+      float value;
+      std::memcpy(&value, &this->data_vector_[actual_index], sizeof(value));
+      value_as_float = value;
       break;
     }
-    default: // Unknown type should never get here so set naN
-      value_as_float = NAN;
+    default:
       ESP_LOGE(TAG_DATA_SENSOR, "Unknown item_type: %u for sensor '%s'", this->item_type_, this->get_label().c_str());
-      
+      return NAN;
   }
 
-  // Publish the value as a sensor state
-  this->publish_state(value_as_float);
+  return value_as_float;
+}
+
+void DataSensor::get_and_publish_sensor_value(size_t index) {
+  float value = this->get_sensor_value(index);
+  this->publish_state(value);
   ESP_LOGD(TAG_DATA_SENSOR, "Published value %.2f from index %u for sensor '%s'", 
-           value_as_float, static_cast<unsigned>(index), this->get_label().c_str());
+           value, static_cast<unsigned>(index), this->get_label().c_str());
 }
 
 uint32_t DataSensor::get_preference_hash() const {

@@ -70,6 +70,9 @@ class DataSensor : public sensor::Sensor {
   // Get value from data vector at index, convert to float and publish
   void get_and_publish_sensor_value(size_t index);
   
+  // Get value from data vector at index without publishing
+  float get_sensor_value(size_t index);
+  
   // Update the sensor value 
   void publish_value(float value); 
   
@@ -96,6 +99,8 @@ class DataSensor : public sensor::Sensor {
  protected:
   void create_preference_();
   void load_data_from_pref_();  // Load from array_pref_ to data_vector_
+  const char* get_off_behavior_string() const;  // Helper to convert off_behavior enum to string
+  const char* get_manual_behavior_string() const;  // Helper to convert manual_behavior enum to string
   float manual_value_{0.0f};
   DataSensorManualBehavior manual_behavior_{DATA_SENSOR_MANUAL_BEHAVIOR_NAN};
   DataSensorOffBehavior off_behavior_{DATA_SENSOR_OFF_BEHAVIOR_NAN};

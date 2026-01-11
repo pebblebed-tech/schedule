@@ -111,10 +111,15 @@ DATA_SENSOR_SCHEMA = cv.Schema({
     cv.Optional(CONF_OFF_VALUE, default=0.0): cv.float_,
     cv.Optional(CONF_MANUAL_BEHAVIOR, default="NAN"): cv.enum(MANUAL_BEHAVIORS, upper=True, space="_"),
     cv.Optional(CONF_MANUAL_VALUE): cv.float_,
-}).extend(sensor.sensor_schema(
+}).extend(cv.COMPONENT_SCHEMA.extend({
+    cv.Optional(CONF_ICON): cv.icon,
+    cv.Optional(CONF_ENTITY_CATEGORY): cv.entity_category,
+})).extend(sensor.sensor_schema(
     DataSensor,
     accuracy_decimals=1,
-)).add_extra(validate_manual_value)
+).extend({
+    cv.Optional(sensor.CONF_FILTERS): cv.invalid("Filters are not supported on schedule data sensors")
+})).add_extra(validate_manual_value)
 
 # Define configuration schema, requiring an entity_id
 CONFIG_SCHEMA = (
