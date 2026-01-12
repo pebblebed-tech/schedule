@@ -12,24 +12,24 @@
 
 #include <functional>
 
-
+// work
 
 // TODO: Add error handling for service call failures
+// TODO: refactor so the schedule switch apprears under switches in yaml as schedule platform
+// TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
+// TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
+// TODO: Ensure schedule_retrieval_service_ is only setup once
+// Test cases
 // TODO: Check multiple data sensors with different item types
 // TODO: Check multiple schedule switch in a single yaml file
-// TODO: refactor so the schedule switch apprears under switches in yaml as schedule platform
-
-
-// TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
-// TODO: Addcode to manage factory reset of schedule to default empty schedule
-// TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
 // TODO: Check that select defaults to manual off on first run and saves to preferences
-// TODO: Ensure schedule_retrieval_service_ is only setup once
+
+// TODO: check that sensor options like unit_of_measurement, device_class, state_class etc can be set from yaml
+// TODO: Check logging is correct and useful
+//Cleanup and docs
 // TODO: Run clang-format on these files
 // TODO: Add Doxygen comments to all methods and classes
 // TODO: Add comments to python so the user knows what each config option does
-// TODO: Check that if JSON has mising days if no events are scheduled for that day it is handled gracefully
-// TODO: check that sensor options like unit_of_measurement, device_class, state_class etc can be set from yaml
 
 // This is needed due to a bug in the logic in HomeAsitant Service Call Action with JSON responses
 // Define this to enable JSON response handling for HomeAssistant actions
@@ -163,8 +163,9 @@ void Schedule::setup() {
     if (this->next_event_sensor_ != nullptr) {
         this->next_event_sensor_->publish_state("Initializing...");
     }
+    // Initial state is NOT_VALID until we have a valid time and schedule
 	this->current_state_ = STATE_NOT_VALID;
-    // Create stuct for holding data sensor current values
+
 }
 
 void Schedule::loop() {
@@ -224,8 +225,11 @@ void Schedule::loop() {
         return;
     }
     else {
-        // to get here time is valid and schedule is valid  
-			if (this->current_state_ == STATE_NOT_VALID) { 
+        // to get here time is valid and schedule is valid , but now need to check if its empty
+        // Transition to INIT state if we were in NOT_VALID and schedule is now valid and not empty
+        // OR if we're already in INIT state (e.g., after receiving a new schedule)
+			if (((this->current_state_ == STATE_NOT_VALID) && (!this->schedule_empty_)) || 
+                (this->current_state_ == STATE_INIT)) { 
         		this->current_state_ = STATE_INIT;
 				ESP_LOGV(TAG, "Schedule is now valid, transitioning to INIT state");
     		}
@@ -278,6 +282,18 @@ void Schedule::loop() {
                 this->processed_state_ = this->current_state_;  
                 ESP_LOGV(TAG, "Schedule state changed to: %d", this->current_state_);   
                 switch(this->current_state_) {
+                    case STATE_NOT_VALID:
+                    // Schedule not valid, set switch off and display message
+                    this->set_schedule_switch_state(false);
+                    this->update_switch_indicator(false);
+                    this->display_current_next_events_("Schedule Not Valid", "Schedule Not Valid");
+                    break;
+                    case STATE_INIT:
+                    // Initialization state, set switch off and display message 
+                    this->set_schedule_switch_state(false);
+                    this->update_switch_indicator(false);
+                    this->display_current_next_events_("Initializing", "Initializing");
+                    break;
                     case STATE_MAN_OFF:
                     // In manual off mode, ensure switch is off
                     this->set_schedule_switch_state(false);
@@ -328,19 +344,43 @@ void Schedule::loop() {
 			auto now_time = this->time_->now();
 			uint16_t current_time_minutes = this->time_to_minutes_(now_time);
 			// Check if we need to update current and next events
+			// When next_event is earlier in the week than current_event, we've wrapped around
+			// and should not advance until we actually reach that time
+			uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
+			uint16_t current_event_time = this->current_event_raw_ & TIME_MASK;
+			bool wrapped_around = (next_event_time < current_event_time);
+			
+			// If wrapped around, check if current time has also wrapped (is before current event)
+			// This indicates we've crossed into the new week
+			bool time_has_wrapped = (current_time_minutes < current_event_time);
+			
+			// Debug logging every 60 seconds to help diagnose advancement issues
+			static uint32_t last_debug_log = 0;
+			if (millis() - last_debug_log >= 60000) {
+				last_debug_log = millis();
+				ESP_LOGD(TAG, "Event check: current_time=%u, next_event=%u, current_event=%u, wrapped=%s, time_wrapped=%s", 
+						 current_time_minutes, next_event_time, current_event_time, 
+						 wrapped_around ? "Y" : "N", time_has_wrapped ? "Y" : "N");
+			}
 
-			if (current_time_minutes >= (this->next_event_raw_ & TIME_MASK)) {
+			// Advance to next event if:
+			// 1. Current time has reached next event time AND
+			// 2. Either we haven't wrapped, OR we have wrapped AND time has also wrapped
+			if (current_time_minutes >= next_event_time && (!wrapped_around || time_has_wrapped)) {
 				// Current event has changed
 				this->current_event_raw_ = this->next_event_raw_;
 				this->current_event_index_ = this->next_event_index_;
-				// get new next event
-				this->next_event_raw_ = this->schedule_times_in_minutes_[this->next_event_index_+ 1];
-				this->next_event_index_ = this->next_event_index_ + 1;
-				if (this->next_event_raw_ == 0xFFFF) {
-					// End of schedule reached of roll over to start of schedule
+				
+				// Check if we've reached the end of the schedule before trying to get next event
+				if (this->schedule_times_in_minutes_[this->current_event_index_ + 1] == 0xFFFF) {
+					// End of schedule reached, roll over to start of schedule
 					ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
 					this->next_event_raw_ = this->schedule_times_in_minutes_[0];
 					this->next_event_index_ = 0;
+				} else {
+					// get new next event
+					this->next_event_raw_ = this->schedule_times_in_minutes_[this->current_event_index_ + 1];
+					this->next_event_index_ = this->current_event_index_ + 1;
 				}
 				// Determine if current event is an "on" or "off" event
 				bool switch_state = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
@@ -353,8 +393,7 @@ void Schedule::loop() {
 						this->current_state_ = STATE_RUN_OFF;
 					}
 				}
-				// Need to fix this code *****************************************************
-				// Check for early off or boost conditions
+
 				else if (this->current_mode_ == SCHEDULE_MODE_EARLY_OFF && this->current_state_ == STATE_RUN_EARLY_OFF ) {
 					if (!switch_state) {
 						this->current_state_ = STATE_RUN_OFF;
@@ -481,7 +520,7 @@ void Schedule::log_state_flags_() {
 }
 
 // Find the index of the current active event (on or off)
-// Returns the array index of the most recent entry that has occurred, or -1 if no entry has occurred yet
+// Returns the array index of the most recent entry that has occurred
 int16_t Schedule::find_current_event_(uint16_t current_time_minutes) {
     const uint16_t TIME_MASK = 0x3FFF;  // Mask to extract time (bits 0-13)
     
@@ -508,6 +547,20 @@ int16_t Schedule::find_current_event_(uint16_t current_time_minutes) {
         }
     }
    
+    // If no event has occurred yet this week, wrap around to the last event from previous week
+    if (current_index == -1) {
+        // Find the last valid entry in the schedule (before the 0xFFFF terminator)
+        for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
+            if (this->schedule_times_in_minutes_[i] == 0xFFFF) {
+                // Found terminator, the previous entry is the last event
+                if (i > 0) {
+                    current_index = static_cast<int16_t>(i - 1);
+                }
+                break;
+            }
+        }
+    }
+    
     return current_index;
 }
 // Helper function to display event time in DDD:HH:MM format
@@ -630,17 +683,30 @@ void Schedule::initialize_schedule_operation_() {
    
     this->current_event_raw_ = this->schedule_times_in_minutes_[current_event_index_];
     uint16_t current_event_time = current_event_raw_ & TIME_MASK;
-    this->next_event_raw_ = this->schedule_times_in_minutes_[current_event_index_ + 1];
-    this->next_event_index_ = current_event_index_ + 1;
-	ESP_LOGV(TAG,"current_event_raw_: 0x%04X, next_event_raw_: 0x%04X current_event_index: %d, next_event_index: %d", this->current_event_raw_, this->next_event_raw_, current_event_index_, this->next_event_index_);
-    if (this->next_event_raw_ == 0xFFFF) {
-        // End of schedule reached of roll over to start of schedule
-// TODO: Need to handle first run when current event is last event in schedule
-// EG what state to set on Monday 00:00 as current event is the last event from the previous week
-        ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
+    
+    // Check if current time is less than current event time
+    // This means all events are in the future and we wrapped to the last event
+    bool all_events_in_future = (current_time_minutes < current_event_time);
+    
+    if (all_events_in_future) {
+        // We're before the first event of the week, so next event is the first event
+        ESP_LOGD(TAG, "All events in future, next event is first event of new week");
         this->next_event_raw_ = this->schedule_times_in_minutes_[0];
         this->next_event_index_ = 0;
+    } else {
+        // Normal case: get the next event after current
+        this->next_event_raw_ = this->schedule_times_in_minutes_[current_event_index_ + 1];
+        this->next_event_index_ = current_event_index_ + 1;
+        
+        if (this->next_event_raw_ == 0xFFFF) {
+            // End of schedule reached, roll over to start of schedule
+            ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
+            this->next_event_raw_ = this->schedule_times_in_minutes_[0];
+            this->next_event_index_ = 0;
+        }
     }
+    
+	ESP_LOGV(TAG,"current_event_raw_: 0x%04X, next_event_raw_: 0x%04X current_event_index: %d, next_event_index: %d", this->current_event_raw_, this->next_event_raw_, current_event_index_, this->next_event_index_);
     uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
 
 
@@ -654,6 +720,9 @@ void Schedule::initialize_schedule_operation_() {
     ESP_LOGV(TAG, "Current event index: %d, time: %s, state: %s", 
              current_event_index_, this->format_event_time_(current_event_time).c_str(), in_event ? "ON" : "OFF");
     this->current_state_ = STATE_INIT_OK;
+    // Reset processed_state_ to force state change detection on next loop iteration
+    // This ensures outputs are updated even if the new schedule results in the same state
+    this->processed_state_ = STATE_NOT_VALID;
     ESP_LOGD(TAG, "Schedule operation initialized");
 }
 
@@ -1248,9 +1317,11 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     this->schedule_valid_ = true;
     // Set schedule_empty based on whether we found any schedule entries
     this->schedule_empty_ = is_empty;
+    // Set to initialized state so the loop will set current/next events
 	this->current_state_ = STATE_INIT;
     if (is_empty) {
         ESP_LOGI(TAG, "Schedule is empty (no time entries found).");
+        this->current_state_ = STATE_NOT_VALID;
     }
     log_state_flags_();
 }
