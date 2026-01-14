@@ -34,15 +34,25 @@ enum ScheduleMode {
 
 // Finite state machine states for loop control
 enum ScheduleState {
-  STATE_NOT_VALID = 0,
-  STATE_INIT = 1,
-  STATE_INIT_OK = 2,
-  STATE_MAN_OFF = 3,
-  STATE_MAN_ON = 4,
-  STATE_RUN_EARLY_OFF = 5,
-  STATE_RUN_BOOST = 6,
-  STATE_RUN_ON = 7,
-  STATE_RUN_OFF = 8
+  // Error/Invalid states (use when something is wrong)
+  STATE_TIME_INVALID = 0,      // RTC time not synchronized
+  STATE_SCHEDULE_INVALID = 1,  // Schedule data is invalid or not available
+  STATE_SCHEDULE_EMPTY = 2,    // Schedule is valid but has no events
+  
+  // Initialization states
+  STATE_INIT = 3,              // Initializing schedule operation
+  
+  // Manual override states
+  STATE_MAN_OFF = 4,           // Manual override: forced off
+  STATE_MAN_ON = 5,            // Manual override: forced on
+  
+  // Temporary mode states
+  STATE_EARLY_OFF = 6,         // Early-off mode active (temporary override)
+  STATE_BOOST_ON = 7,          // Boost mode active (temporary override)
+  
+  // Auto mode states
+  STATE_AUTO_ON = 8,           // Auto mode: schedule indicates ON
+  STATE_AUTO_OFF = 9           // Auto mode: schedule indicates OFF
 };
 
 // Forward declarations
@@ -105,76 +115,49 @@ class Schedule : public EntityBase, public Component  {
     std::string label;
     uint16_t value;
     uint16_t size;
-    };
+  };
+
+  //============================================================================
+  // COMPONENT LIFECYCLE METHODS
+  //============================================================================
   void setup() override;
   void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return esphome::setup_priority::LATE; }
-  void set_schedule_entity_id(const std::string &ha_schedule_entity_id);
-  void set_max_schedule_size(size_t size);
+  
   void set_max_schedule_entries(size_t entries);
+  void set_max_schedule_size(size_t size);
   void set_update_schedule_on_reconnect(bool update) { this->update_on_reconnect_ = update; }
-   /// Trigger a schedule.get_schedule request.
-  void request_schedule();
-  void create_schedule_preference();
-  void load_schedule_from_pref_();
-  void save_schedule_to_pref_();
-  void setup_schedule_retrieval_service_();
-  void request_pref_hash() {
-    ESP_LOGI("*****************", "Preference Hash: %u", this->get_preference_hash());
-  }
-  void process_schedule_(const JsonObjectConst &response); 
-   // Log schedule data for debugging
-  void log_schedule_data();
-   
-  void add_data_item(const std::string &label, uint16_t value);
-  const std::vector<DataItem>& get_data_items() const {
-        return data_items_;
-    }
-  void print_data_items();
-  void register_data_sensor(DataSensor *sensor) {
-    this->data_sensors_.push_back(sensor);
-  }
   
-  void sched_add_pref(ArrayPreferenceBase *array_pref);
-  
-  // Set the switch indicator binary sensor
+  //============================================================================
+  // CONFIGURATION AND SETUP METHODS
+  //============================================================================
+  void set_schedule_entity_id(const std::string &ha_schedule_entity_id);
+  void set_mode_select(ScheduleModeSelect *mode_select);
   void set_switch_indicator(ScheduleSwitchIndicator *indicator) {
     this->switch_indicator_ = indicator;
   }
-  
   void set_schedule_switch(ScheduleSwitch *schedule_switch) { 
     this->schedule_switch_ = schedule_switch; 
   }
-  
-  void set_mode_select(ScheduleModeSelect *mode_select);
-    // Set the mode select option programmatically using enum
-  void set_mode_option(ScheduleMode mode);
-  
-  // Called when mode select changes from Home Assistant
-  void on_mode_changed(const std::string &mode);
-
   void set_current_event_sensor(text_sensor::TextSensor *sensor) {
     this->current_event_sensor_ = sensor;
   }
-  
   void set_next_event_sensor(text_sensor::TextSensor *sensor) {
     this->next_event_sensor_ = sensor;
   }
-  
-  // Set the time component for time validation
   void set_time(time::RealTimeClock *time) {
     this->time_ = time;
   }
   
-  // Update the switch indicator state
+  //============================================================================
+  // UI UPDATE METHODS
+  //============================================================================
   void update_switch_indicator(bool state) {
     if (this->switch_indicator_ != nullptr) {
       this->switch_indicator_->publish_switch_state(state);
     }
   }
-  
-  // Control the schedule switch state
   void set_schedule_switch_state(bool state) {
     if (this->schedule_switch_ != nullptr) {
       // Update sensor values in the switch before changing state
@@ -183,75 +166,166 @@ class Schedule : public EntityBase, public Component  {
     }
   }
   
+  //============================================================================
+  // HOME ASSISTANT INTEGRATION
+  //============================================================================
+  void request_schedule();
+  void process_schedule_(const JsonObjectConst &response);
+  void setup_schedule_retrieval_service_();
+  
+  //============================================================================
+  // PREFERENCE MANAGEMENT
+  //============================================================================
+  void create_schedule_preference();
+  void load_schedule_from_pref_();
+  void save_schedule_to_pref_();
+  void sched_add_pref(ArrayPreferenceBase *array_pref);
+  void request_pref_hash() {
+    ESP_LOGI("*****************", "Preference Hash: %u", this->get_preference_hash());
+  }
+  
+  //============================================================================
+  // MODE SELECTION AND CONTROL
+  //============================================================================
+  void set_mode_option(ScheduleMode mode);
+  void on_mode_changed(const std::string &mode);
+  
+  //============================================================================
+  // DATA MANAGEMENT
+  //============================================================================
+  void add_data_item(const std::string &label, uint16_t value);
+  const std::vector<DataItem>& get_data_items() const {
+    return data_items_;
+  }
+  void print_data_items();
+  void log_schedule_data();
+  void register_data_sensor(DataSensor *sensor) {
+    this->data_sensors_.push_back(sensor);
+  }
 
-
-  // Test methods for debugging preference storage
+  //============================================================================
+  // TEST AND DEBUG METHODS
+  //============================================================================
   void test_create_preference();
   void test_save_preference();
   void test_load_preference();
 
  private:
-  uint16_t  timeToMinutes_(const char* time_str);
+  //============================================================================
+  // STATE MACHINE HELPER METHODS
+  //============================================================================
+  ScheduleState mode_to_state_(ScheduleMode mode, bool event_on);
+  bool should_reset_to_auto_(ScheduleState state, bool event_on);
+  ScheduleState get_state_after_mode_reset_(bool event_on);
+  void handle_state_change_();
+  
+  //============================================================================
+  // MAIN LOOP HELPER METHODS
+  //============================================================================
+  bool check_prerequisites_();
+  bool should_advance_to_next_event_(uint16_t current_time_minutes);
+  void advance_to_next_event_();
+  void check_and_advance_events_();
+  
+  //============================================================================
+  // CONFIGURATION AND SETUP HELPERS
+  //============================================================================
+  void check_rtc_time_valid_();
+  void check_ha_connection_();
+  void log_state_flags_();
+  
+  //============================================================================
+  // EVENT MANAGEMENT AND SCHEDULING
+  //============================================================================
+  void initialize_schedule_operation_();
+  void initialize_sensor_last_on_values_(int16_t current_event_index);
+  int16_t find_current_event_(uint16_t current_time_minutes);
+  
+  //============================================================================
+  // TIME AND FORMATTING UTILITIES
+  //============================================================================
+  uint16_t timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
-  void check_rtc_time_valid_();  // Check and update RTC time validity
-  void check_ha_connection_();   // Check and update Home Assistant connection state
-  void log_state_flags_();       // Log verbose state of boolean flags
-  void initialize_schedule_operation_();  // Initialize current and next event times
-  void initialize_sensor_last_on_values_(int16_t current_event_index);  // Initialize last_on_value_ for each sensor
-  void display_current_next_events_(std::string current_text, std::string next_text); // Update current/next event sensors
-  int16_t find_current_event_(uint16_t current_time_minutes);  // Find index of current active event (on or off)
-  uint16_t time_to_minutes_(auto current_now); // Helper to convert time to minutes from week start
-  std::string format_event_time_(uint16_t time_minutes); // Format event time for logging
-  std::string create_event_string_(uint16_t event_raw); // Create event string for sensors
-  uint16_t get_current_week_minutes_(); // Get current time in minutes from week start
+  uint16_t time_to_minutes_(auto current_now);
+  std::string format_event_time_(uint16_t time_minutes);
+  std::string create_event_string_(uint16_t event_raw);
+  uint16_t get_current_week_minutes_();
+  
+  //============================================================================
+  // UI UPDATE HELPERS
+  //============================================================================
+  void display_current_next_events_(std::string current_text, std::string next_text);
   void set_data_sensors_(int16_t current_index, bool state, bool manual_override);
-  void update_switch_sensor_values_();  // Update sensor values in the switch before triggering
+  void update_switch_sensor_values_();
+  
+  //============================================================================
+  // PREFERENCE MANAGEMENT HELPERS
+  //============================================================================
+  void load_entity_id_from_pref_();
+  void save_entity_id_to_pref_();
+  
+  //============================================================================
+  // HOME ASSISTANT INTEGRATION HELPERS
+  //============================================================================
+  void setup_notification_service_();
+  void send_ha_notification_(const std::string &message, const std::string &title);
+  
+  //============================================================================
+  // MEMBER VARIABLES
+  //============================================================================
+  
+  // Preference and configuration
   ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
   size_t schedule_max_entries_{0};
-
-  
-  std::vector<uint16_t> schedule_times_in_minutes_; // Use std::vector for runtime sizing
-  std::vector<uint16_t> factory_reset_values_= {0xFFFF,0xFFFF}; // Set the MSB to denote end of schedule
   std::string ha_schedule_entity_id_;
+  
+  // Schedule data
+  std::vector<uint16_t> schedule_times_in_minutes_;
+  std::vector<uint16_t> factory_reset_values_ = {0xFFFF, 0xFFFF};
   std::vector<DataItem> data_items_;
   std::vector<DataSensor *> data_sensors_;
+  
+  // UI components
   ScheduleSwitchIndicator *switch_indicator_{nullptr};
   ScheduleSwitch *schedule_switch_{nullptr};
   ScheduleModeSelect *mode_select_{nullptr};
   text_sensor::TextSensor *current_event_sensor_{nullptr};
   text_sensor::TextSensor *next_event_sensor_{nullptr};
-  ScheduleMode current_mode_{SCHEDULE_MODE_MANUAL_OFF};  // Current schedule mode from select
-  ScheduleState current_state_{STATE_INIT};  // Current FSM state
-  ScheduleState processed_state_{STATE_INIT};  // the last FSM state
+  
+  // State machine
+  ScheduleMode current_mode_{SCHEDULE_MODE_MANUAL_OFF};
+  ScheduleState current_state_{STATE_INIT};
+  ScheduleState processed_state_{STATE_INIT};
+  
+  // Status flags
   bool ha_connected_{false};
   bool ha_connected_once_{false};
   bool rtc_time_valid_{false};
   bool schedule_valid_{false};
   bool schedule_empty_{true};
   bool update_on_reconnect_{false};
+  bool entity_id_changed_{false};
+  
+  // Timing
   uint32_t last_connection_check_{0};
   uint32_t last_time_check_{0};
-  uint32_t last_schedule_request_time_{0};
   uint32_t last_state_log_time_{0};
   time::RealTimeClock *time_{nullptr};
-  uint16_t current_event_raw_{0};  
+  
+  // Event tracking
+  uint16_t current_event_raw_{0};
   uint16_t next_event_raw_{0};
   int16_t current_event_index_{-1};
   int16_t next_event_index_{-1};
-  bool event_switch_state_{false};  // true=on, false=off
-  uint32_t stored_entity_id_hash_{0};  // Hash of previously stored entity ID from preferences
-  bool entity_id_changed_{false};  // Set once in setup() if entity ID changed from stored preference
+  bool event_switch_state_{false};
   
-  // Entity ID preference management
-  void load_entity_id_from_pref_();
-  void save_entity_id_to_pref_();
-protected:
+  // Entity ID tracking
+  uint32_t stored_entity_id_hash_{0};
 
-  // Action object that sends the HA service call.
+protected:
+  // Home Assistant service actions
   esphome::api::HomeAssistantServiceCallAction<> *ha_get_schedule_action_{nullptr};
-  
-  // Action object for sending notifications to Home Assistant
   esphome::api::HomeAssistantServiceCallAction<> *ha_notify_action_{nullptr};
 
   // Containers to own the automations/actions so they remain alive
@@ -259,13 +333,6 @@ protected:
   std::vector<std::unique_ptr<esphome::Action<JsonObjectConst>>> ha_json_actions_;
   std::vector<std::unique_ptr<esphome::Automation<std::string>>> ha_str_automations_;
   std::vector<std::unique_ptr<esphome::Action<std::string>>> ha_str_actions_;
-
- private:
-  // Setup notification service
-  void setup_notification_service_();
-  // Send notification to Home Assistant
-  void send_ha_notification_(const std::string &message, const std::string &title);
-
 };
 
 

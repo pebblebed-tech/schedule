@@ -12,8 +12,6 @@
 
 #include <functional>
 
-// work
-
 // TODO: Add error handling for service call failures
 // TODO: refactor so the schedule switch apprears under switches in yaml as schedule platform
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
@@ -23,10 +21,9 @@
 // TODO: Check multiple data sensors with different item types
 // TODO: Check multiple schedule switch in a single yaml file
 // TODO: Check that select defaults to manual off on first run and saves to preferences
-
 // TODO: check that sensor options like unit_of_measurement, device_class, state_class etc can be set from yaml
 // TODO: Check logging is correct and useful
-//Cleanup and docs
+// Cleanup and docs
 // TODO: Run clang-format on these files
 // TODO: Add Doxygen comments to all methods and classes
 // TODO: Add comments to python so the user knows what each config option does
@@ -39,7 +36,6 @@
 
 namespace esphome {
 namespace schedule {
-// forward declaration of Schedule
 
 static const char *const TAG = "schedule";
 
@@ -47,15 +43,16 @@ static const char *const TAG = "schedule";
 static constexpr uint16_t TIME_MASK = 0x3FFF;  // Mask to extract time (bits 0-13)
 static constexpr uint16_t SWITCH_STATE_BIT = 0x4000;  // Bit 14: switch state
 
+//==============================================================================
+// HELPER CLASSES FOR HOME ASSISTANT INTEGRATION
+//==============================================================================
+
 class MySuccessWithJsonTrigger : public Trigger<JsonObjectConst> {
  public:
   explicit MySuccessWithJsonTrigger(Schedule *parent) : parent_(parent) {}
   
   void trigger(const JsonObjectConst &response)  {
-    // Inspect the JSON response
     ESP_LOGI(TAG, "Received JSON response from Home Assistant action");
-    
-    // Process the schedule - the process_schedule_ method will extract the correct entity
     parent_->process_schedule_(response);
   }
   
@@ -63,7 +60,6 @@ class MySuccessWithJsonTrigger : public Trigger<JsonObjectConst> {
   Schedule *parent_;
 };
 
-// Error trigger (error message string)
 class MyErrorTrigger : public Trigger<std::string> {
  public:
   void trigger(const std::string &err)  {
@@ -71,7 +67,10 @@ class MyErrorTrigger : public Trigger<std::string> {
   }
 };
 
-// UpdateScheduleButton implementation
+//==============================================================================
+// UI COMPONENT IMPLEMENTATIONS
+//==============================================================================
+
 void UpdateScheduleButton::press_action() {
   if (this->schedule_ != nullptr) {
     ESP_LOGI(TAG, "Update button pressed, requesting schedule update...");
@@ -81,24 +80,22 @@ void UpdateScheduleButton::press_action() {
   }
 }
 
-// ScheduleSwitch implementation
 void ScheduleSwitch::write_state(bool state) {
-  // Publish the new state
   this->publish_state(state);
-  
-  // Log the state change
   ESP_LOGI(TAG, "Schedule switch state changed to: %s", state ? "ON" : "OFF");
   
-  // Update the indicator to follow the switch state
   if (this->schedule_ != nullptr) {
     this->schedule_->update_switch_indicator(state);
   }
 }
 
-// Schedule implementations
+//==============================================================================
+// SCHEDULE CLASS: COMPONENT LIFECYCLE METHODS
+//==============================================================================
+//==============================================================================
+// SCHEDULE CLASS: COMPONENT LIFECYCLE METHODS
+//==============================================================================
 
-//class Schedule;
-// Setter for max schedule entries EG number of schedule time pairs
 void Schedule::set_max_schedule_entries(size_t entries) {
     this->schedule_max_entries_ = entries; 
     this->set_max_schedule_size(entries);  //This will set the size of schedule_times_in_minutes_ vector in bytes
@@ -151,6 +148,8 @@ void Schedule::setup() {
             this->schedule_valid_ = false;
             this->schedule_empty_ = true;
             this->save_entity_id_to_pref_();
+            // Clear the flag after handling the change
+            this->entity_id_changed_ = false;
         }
         this->request_schedule();
     } else if (this->entity_id_changed_) {
@@ -163,40 +162,175 @@ void Schedule::setup() {
     if (this->next_event_sensor_ != nullptr) {
         this->next_event_sensor_->publish_state("Initializing...");
     }
-    // Initial state is NOT_VALID until we have a valid time and schedule
-	this->current_state_ = STATE_NOT_VALID;
+    // Initial state is TIME_INVALID until we have a valid time and schedule
+	this->current_state_ = STATE_TIME_INVALID;
 
 }
 
-void Schedule::loop() {
-	    uint32_t now = millis();
-	   // Log state flags every 60 seconds
-    if (now - this->last_state_log_time_ >= 60000) {
-        this->last_state_log_time_ = now;
-        this->log_state_flags_();
-		ESP_LOGV(TAG, "Schedule loop state: %d", this->current_state_);
-		ESP_LOGV(TAG, "Current mode: %d", this->current_mode_);
-	}
+//==============================================================================
+// STATE MACHINE HELPER METHODS
+//==============================================================================
 
-    // If time is not valid, check every second
-    if (!this->rtc_time_valid_){
-        if (now - this->last_time_check_ >= 1000) {
-            this->last_time_check_ = now;
-            this->check_rtc_time_valid_();
-        }
-        // If time is not valid, skip rest of loop
-        this->current_state_ = STATE_NOT_VALID;
+// Map current mode to appropriate state based on event state
+ScheduleState Schedule::mode_to_state_(ScheduleMode mode, bool event_on) {
+    switch(mode) {
+        case SCHEDULE_MODE_MANUAL_OFF:
+            return STATE_MAN_OFF;
+        case SCHEDULE_MODE_MANUAL_ON:
+            return STATE_MAN_ON;
+        case SCHEDULE_MODE_EARLY_OFF:
+            return STATE_EARLY_OFF;
+        case SCHEDULE_MODE_BOOST_ON:
+            return STATE_BOOST_ON;
+        case SCHEDULE_MODE_AUTO:
+            return event_on ? STATE_AUTO_ON : STATE_AUTO_OFF;
+        default:
+            ESP_LOGW(TAG, "Unknown schedule mode: %d", mode);
+            return STATE_SCHEDULE_INVALID;
+    }
+}
+
+// Check if temporary mode (early-off or boost) should reset to auto
+bool Schedule::should_reset_to_auto_(ScheduleState state, bool event_on) {
+    // Early-off mode resets to auto on any schedule event (either ON or OFF)
+    if (state == STATE_EARLY_OFF) {
+        return true;
+    }
+    // Boost mode resets to auto on any schedule event (either ON or OFF)
+    if (state == STATE_BOOST_ON) {
+        return true;
+    }
+    return false;
+}
+
+// Get the state after resetting from temporary mode to auto
+ScheduleState Schedule::get_state_after_mode_reset_(bool event_on) {
+    return event_on ? STATE_AUTO_ON : STATE_AUTO_OFF;
+}
+
+// Handle state transitions and perform associated actions
+void Schedule::handle_state_change_() {
+    // Only process if state actually changed
+    if (this->current_state_ == this->processed_state_) {
         return;
     }
-   
-    // Check Home Assistant API connection
-    // Every 5 seconds if never connected, every 60 seconds if previously connected
-    if (!this->ha_connected_){
+    
+    this->processed_state_ = this->current_state_;
+    ESP_LOGV(TAG, "Schedule state changed to: %d", this->current_state_);
+    
+    // Perform actions based on new state
+    switch(this->current_state_) {
+        case STATE_TIME_INVALID:
+        case STATE_SCHEDULE_INVALID:
+            // Invalid states - turn off and display error
+            this->set_schedule_switch_state(false);
+            this->update_switch_indicator(false);
+            this->display_current_next_events_(
+                this->current_state_ == STATE_TIME_INVALID ? "Time Invalid" : "Schedule Invalid",
+                this->current_state_ == STATE_TIME_INVALID ? "Time Invalid" : "Schedule Invalid"
+            );
+            break;
+            
+        case STATE_SCHEDULE_EMPTY:
+            // Schedule valid but empty - turn off and inform
+            this->set_schedule_switch_state(false);
+            this->update_switch_indicator(false);
+            this->display_current_next_events_("Schedule Empty", "Schedule Empty");
+            break;
+            
+        case STATE_INIT:
+            // Initialization state - turn off and display message
+            this->set_schedule_switch_state(false);
+            this->update_switch_indicator(false);
+            this->display_current_next_events_("Initializing", "Initializing");
+            break;
+            
+        case STATE_MAN_OFF:
+            // Manual off mode - force off
+            this->set_schedule_switch_state(false);
+            this->update_switch_indicator(false);
+            this->display_current_next_events_("Manual Off", "");
+            this->set_data_sensors_(this->current_event_index_, false, true);
+            break;
+            
+        case STATE_MAN_ON:
+            // Manual on mode - force on
+            this->set_schedule_switch_state(true);
+            this->update_switch_indicator(true);
+            this->display_current_next_events_("Manual On", "");
+            this->set_data_sensors_(this->current_event_index_, true, true);
+            break;
+            
+        case STATE_EARLY_OFF:
+            // Early-off mode - turn off until next schedule event
+            this->set_schedule_switch_state(false);
+            this->update_switch_indicator(false);
+            this->display_current_next_events_("Early Off", this->create_event_string_(this->next_event_raw_));
+            this->set_data_sensors_(this->current_event_index_, false, false);
+            break;
+            
+        case STATE_BOOST_ON:
+            // Boost mode - turn on until next schedule event
+            this->set_schedule_switch_state(true);
+            this->update_switch_indicator(true);
+            this->display_current_next_events_("Boost On", this->create_event_string_(this->next_event_raw_));
+            this->set_data_sensors_(this->current_event_index_, true, false);
+            break;
+            
+        case STATE_AUTO_ON:
+            // Auto mode - schedule indicates ON
+            this->set_schedule_switch_state(true);
+            this->update_switch_indicator(true);
+            this->display_current_next_events_(
+                this->create_event_string_(this->current_event_raw_), 
+                this->create_event_string_(this->next_event_raw_)
+            );
+            this->set_data_sensors_(this->current_event_index_, true, false);
+            break;
+            
+        case STATE_AUTO_OFF:
+            // Auto mode - schedule indicates OFF
+            this->set_schedule_switch_state(false);
+            this->update_switch_indicator(false);
+            this->display_current_next_events_(
+                this->create_event_string_(this->current_event_raw_), 
+                this->create_event_string_(this->next_event_raw_)
+            );
+            this->set_data_sensors_(this->current_event_index_, false, false);
+            break;
+            
+        default:
+            ESP_LOGW(TAG, "Unknown schedule state in handle_state_change_: %d", this->current_state_);
+            this->current_state_ = STATE_SCHEDULE_INVALID;
+            break;
+    }
+}
+
+// Check prerequisites: time validity, HA connection, and schedule validity
+bool Schedule::check_prerequisites_() {
+    // Check time validity
+    if (!this->rtc_time_valid_) {
+        this->check_rtc_time_valid_();
+        // If time is not valid, set state and skip rest
+        if (!this->rtc_time_valid_) {
+            // Only log if transitioning to this state
+            if (this->current_state_ != STATE_TIME_INVALID) {
+                ESP_LOGW(TAG, "Time is not valid, schedule operations paused");
+                this->current_state_ = STATE_TIME_INVALID;
+            }
+            return false;
+        }
+    }
+    
+    // Check Home Assistant API connection periodically
+    uint32_t now = millis();
+    if (!this->ha_connected_) {
         uint32_t check_interval = this->ha_connected_once_ ? 60000 : 5000;
         if (now - this->last_connection_check_ >= check_interval) {
             this->last_connection_check_ = now;
             this->check_ha_connection_();
             
+            // If we just reconnected, request schedule update if configured or needed
             if ((this->ha_connected_ && this->update_on_reconnect_) || 
                 (this->ha_connected_ && this->schedule_valid_ == false) ||
                 (this->ha_connected_ && this->entity_id_changed_)) {
@@ -208,219 +342,187 @@ void Schedule::loop() {
                     this->schedule_valid_ = false;
                     this->schedule_empty_ = true;
                     this->save_entity_id_to_pref_();
+                    // Clear the flag after handling the change
+                    this->entity_id_changed_ = false;
                 }
                 this->request_schedule();
             }
-            // If not connected and the schedule is not valid, skip rest of loop
-            if (!this->schedule_valid_ && !this->ha_connected_) {
-                this->current_state_ = STATE_NOT_VALID;
-                return;
-            }
         }
-    } 
+        
+        // If not connected and schedule is not valid, skip rest
+        if (!this->schedule_valid_ && !this->ha_connected_) {
+            // Only log if transitioning to this state
+            if (this->current_state_ != STATE_SCHEDULE_INVALID) {
+                ESP_LOGW(TAG, "Schedule is not valid and Home Assistant not connected");
+                this->current_state_ = STATE_SCHEDULE_INVALID;
+            }
+            return false;
+        }
+    }
+    
+    // Check schedule validity
     if (!this->schedule_valid_) {
-        // We can not continue without a valid schedule
-        this->current_state_ = STATE_NOT_VALID;
-		ESP_LOGW(TAG, "Schedule is not valid, cannot proceed with schedule operation");
+        // Only log if transitioning to this state
+        if (this->current_state_ != STATE_SCHEDULE_INVALID) {
+            ESP_LOGW(TAG, "Schedule is not valid, cannot proceed with schedule operation");
+            this->current_state_ = STATE_SCHEDULE_INVALID;
+        }
+        return false;
+    }
+    
+    // Check if schedule is empty
+    if (this->schedule_empty_) {
+        // Only log if transitioning to this state
+        if (this->current_state_ != STATE_SCHEDULE_EMPTY) {
+            ESP_LOGI(TAG, "Schedule is empty, no events to process");
+            this->current_state_ = STATE_SCHEDULE_EMPTY;
+        }
+        return false;
+    }
+    
+    // Transition to INIT state if we were in an error state and schedule is now valid
+    if ((this->current_state_ == STATE_TIME_INVALID || 
+         this->current_state_ == STATE_SCHEDULE_INVALID || 
+         this->current_state_ == STATE_SCHEDULE_EMPTY) && 
+        !this->schedule_empty_) {
+        this->current_state_ = STATE_INIT;
+        ESP_LOGV(TAG, "Prerequisites met, transitioning to INIT state");
+    }
+    
+    return true;
+}
+
+// Check if we should advance to the next event
+bool Schedule::should_advance_to_next_event_(uint16_t current_time_minutes) {
+    uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
+    uint16_t current_event_time = this->current_event_raw_ & TIME_MASK;
+    
+    // Check if schedule wrapped around (next event is earlier in week than current)
+    bool wrapped_around = (next_event_time < current_event_time);
+    
+    // If wrapped around, check if current time has also wrapped (is before current event)
+    // This indicates we've crossed into the new week
+    bool time_has_wrapped = (current_time_minutes < current_event_time);
+    
+    // Debug logging every 60 seconds
+    static uint32_t last_debug_log = 0;
+    if (millis() - last_debug_log >= 60000) {
+        last_debug_log = millis();
+        ESP_LOGD(TAG, "Event check: current_time=%u, next_event=%u, current_event=%u, wrapped=%s, time_wrapped=%s", 
+                 current_time_minutes, next_event_time, current_event_time, 
+                 wrapped_around ? "Y" : "N", time_has_wrapped ? "Y" : "N");
+    }
+    
+    // Advance to next event if:
+    // 1. Current time has reached next event time AND
+    // 2. Either we haven't wrapped, OR we have wrapped AND time has also wrapped
+    return (current_time_minutes >= next_event_time && (!wrapped_around || time_has_wrapped));
+}
+
+// Advance to the next event in the schedule
+void Schedule::advance_to_next_event_() {
+    // Current event becomes the next event
+    this->current_event_raw_ = this->next_event_raw_;
+    this->current_event_index_ = this->next_event_index_;
+    
+    // Check if we've reached the end of the schedule
+    if (this->schedule_times_in_minutes_[this->current_event_index_ + 1] == 0xFFFF) {
+        // End of schedule reached, roll over to start
+        ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
+        this->next_event_raw_ = this->schedule_times_in_minutes_[0];
+        this->next_event_index_ = 0;
+    } else {
+        // Get the next event after current
+        this->next_event_raw_ = this->schedule_times_in_minutes_[this->current_event_index_ + 1];
+        this->next_event_index_ = this->current_event_index_ + 1;
+    }
+    
+    // Update event switch state based on current event
+    this->event_switch_state_ = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
+}
+
+// Check time and advance events if needed
+void Schedule::check_and_advance_events_() {
+    // Get current time in minutes
+    auto now_time = this->time_->now();
+    uint16_t current_time_minutes = this->time_to_minutes_(now_time);
+    
+    // Check if we should advance to next event
+    if (!this->should_advance_to_next_event_(current_time_minutes)) {
         return;
     }
-    else {
-        // to get here time is valid and schedule is valid , but now need to check if its empty
-        // Transition to INIT state if we were in NOT_VALID and schedule is now valid and not empty
-        // OR if we're already in INIT state (e.g., after receiving a new schedule)
-			if (((this->current_state_ == STATE_NOT_VALID) && (!this->schedule_empty_)) || 
-                (this->current_state_ == STATE_INIT)) { 
-        		this->current_state_ = STATE_INIT;
-				ESP_LOGV(TAG, "Schedule is now valid, transitioning to INIT state");
-    		}
-	}
-    if (this->current_state_ == STATE_INIT) {
-        // Transition to normal operation state
-
-        ESP_LOGI(TAG, "Transitioning to normal operation state");
-       // setup the current event time and next event time and set state    
-        this->initialize_schedule_operation_();
-		ESP_LOGI(TAG, "Normal operation, mode = %d State = %d", this->current_mode_, this->current_state_);
-        return; // Exit loop to allow next iteration to handle normal operation
+    
+    // Advance to next event
+    this->advance_to_next_event_();
+    
+    // Handle mode transitions for temporary modes
+    if (this->should_reset_to_auto_(this->current_state_, this->event_switch_state_)) {
+        // Reset from temporary mode (early-off or boost) back to auto
+        this->current_mode_ = SCHEDULE_MODE_AUTO;
+        this->current_state_ = this->get_state_after_mode_reset_(this->event_switch_state_);
+        this->set_mode_option(this->current_mode_);
+        ESP_LOGD(TAG, "Temporary mode expired, reset to AUTO mode, state=%d", this->current_state_);
     }
-	 // Normal operation - run every second
+    // Update state for auto mode based on new event
+    else if (this->current_mode_ == SCHEDULE_MODE_AUTO) {
+        this->current_state_ = this->event_switch_state_ ? STATE_AUTO_ON : STATE_AUTO_OFF;
+    }
+}
+
+//==============================================================================
+// MAIN LOOP AND HELPER METHODS
+//==============================================================================
+
+void Schedule::loop() {
+    uint32_t now = millis();
+    
+    // Periodic logging every 60 seconds
+    if (now - this->last_state_log_time_ >= 60000) {
+        this->last_state_log_time_ = now;
+        this->log_state_flags_();
+        ESP_LOGV(TAG, "Schedule loop state: %d", this->current_state_);
+        ESP_LOGV(TAG, "Current mode: %d", this->current_mode_);
+    }
+
+    // Normal operation - run every second
     if (now - this->last_time_check_ >= 1000) {
         this->last_time_check_ = now;
-		// As long as we are not in INIT or NOT_VALID state we can proceed
-		if (this->current_state_ != STATE_INIT && this->current_state_ != STATE_NOT_VALID) { 
-			// Now we passed init lets check mode to see what mode we are in
-			switch(this->current_mode_) {
-				case SCHEDULE_MODE_MANUAL_OFF:
-					this->current_state_ =  STATE_MAN_OFF;
-					break; 
-				case SCHEDULE_MODE_MANUAL_ON:
-					this->current_state_ =  STATE_MAN_ON;  
-					break; 
-				case SCHEDULE_MODE_EARLY_OFF:
-					this->current_state_ =  STATE_RUN_EARLY_OFF;  
-					break; 
-				case SCHEDULE_MODE_BOOST_ON:
-					this->current_state_ =  STATE_RUN_BOOST;
-					break; 
-				case SCHEDULE_MODE_AUTO:
-					if (this->event_switch_state_) {
-						this->current_state_ =  STATE_RUN_ON;  
-					} else {
-						this->current_state_ =  STATE_RUN_OFF; 
-					}   
-					break; 
-				default:
-					ESP_LOGW(TAG, "Unknown schedule mode: %d", this->current_mode_);
-					this->current_state_ = STATE_NOT_VALID;
-					return;
-			}
-   
-			// Depending on current mode handle schedule operation
-
-            // Check if state has changed, if so handle the state change
-            if (this->current_state_ != this->processed_state_) {   
-                this->processed_state_ = this->current_state_;  
-                ESP_LOGV(TAG, "Schedule state changed to: %d", this->current_state_);   
-                switch(this->current_state_) {
-                    case STATE_NOT_VALID:
-                    // Schedule not valid, set switch off and display message
-                    this->set_schedule_switch_state(false);
-                    this->update_switch_indicator(false);
-                    this->display_current_next_events_("Schedule Not Valid", "Schedule Not Valid");
-                    break;
-                    case STATE_INIT:
-                    // Initialization state, set switch off and display message 
-                    this->set_schedule_switch_state(false);
-                    this->update_switch_indicator(false);
-                    this->display_current_next_events_("Initializing", "Initializing");
-                    break;
-                    case STATE_MAN_OFF:
-                    // In manual off mode, ensure switch is off
-                    this->set_schedule_switch_state(false);
-                    this->update_switch_indicator(false);
-                    this->display_current_next_events_("Manual Off", "");
-                    this->set_data_sensors_(this->current_event_index_, false,true);
-                    break;
-                    case STATE_MAN_ON:
-                    // In manual on mode, ensure switch is on
-                    this->set_schedule_switch_state(true);
-                    this->update_switch_indicator(true);
-                    this->display_current_next_events_("Manual On", "");
-                    this->set_data_sensors_(this->current_event_index_, true,true);
-                    break;
-                    case STATE_RUN_EARLY_OFF:
-                    this->set_schedule_switch_state(false);
-                    this->update_switch_indicator(false);
-                    this->display_current_next_events_("Early Off", this->create_event_string_(this->next_event_raw_));
-                    this->set_data_sensors_(this->current_event_index_, false,false);
-                    break;
-                    case STATE_RUN_BOOST:
-                    this->set_schedule_switch_state(true);
-                    this->update_switch_indicator(true);
-                    this->display_current_next_events_("Boost On", this->create_event_string_(this->next_event_raw_));
-                    this->set_data_sensors_(this->current_event_index_, true,false);
-                    break; 
-                    case STATE_RUN_ON:
-                    this->set_schedule_switch_state(true);
-                    this->update_switch_indicator(true);
-                    this->display_current_next_events_(this->create_event_string_(this->current_event_raw_), this->create_event_string_(this->next_event_raw_));
-                    this->set_data_sensors_(this->current_event_index_, true,false);
-                    break;
-                    case STATE_RUN_OFF:
-                    this->set_schedule_switch_state(false);
-                    this->update_switch_indicator(false);
-                    this->display_current_next_events_(this->create_event_string_(this->current_event_raw_), this->create_event_string_(this->next_event_raw_));
-                    this->set_data_sensors_(this->current_event_index_, false,false);
-                    break;
-                    
-                    default:
-                    ESP_LOGW(TAG, "Unknown schedule state: %d", this->current_state_);
-                    this->current_state_ = STATE_NOT_VALID;
-                }
-            }
-				
-			
-			// Get current time in minutes
-			auto now_time = this->time_->now();
-			uint16_t current_time_minutes = this->time_to_minutes_(now_time);
-			// Check if we need to update current and next events
-			// When next_event is earlier in the week than current_event, we've wrapped around
-			// and should not advance until we actually reach that time
-			uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
-			uint16_t current_event_time = this->current_event_raw_ & TIME_MASK;
-			bool wrapped_around = (next_event_time < current_event_time);
-			
-			// If wrapped around, check if current time has also wrapped (is before current event)
-			// This indicates we've crossed into the new week
-			bool time_has_wrapped = (current_time_minutes < current_event_time);
-			
-			// Debug logging every 60 seconds to help diagnose advancement issues
-			static uint32_t last_debug_log = 0;
-			if (millis() - last_debug_log >= 60000) {
-				last_debug_log = millis();
-				ESP_LOGD(TAG, "Event check: current_time=%u, next_event=%u, current_event=%u, wrapped=%s, time_wrapped=%s", 
-						 current_time_minutes, next_event_time, current_event_time, 
-						 wrapped_around ? "Y" : "N", time_has_wrapped ? "Y" : "N");
-			}
-
-			// Advance to next event if:
-			// 1. Current time has reached next event time AND
-			// 2. Either we haven't wrapped, OR we have wrapped AND time has also wrapped
-			if (current_time_minutes >= next_event_time && (!wrapped_around || time_has_wrapped)) {
-				// Current event has changed
-				this->current_event_raw_ = this->next_event_raw_;
-				this->current_event_index_ = this->next_event_index_;
-				
-				// Check if we've reached the end of the schedule before trying to get next event
-				if (this->schedule_times_in_minutes_[this->current_event_index_ + 1] == 0xFFFF) {
-					// End of schedule reached, roll over to start of schedule
-					ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
-					this->next_event_raw_ = this->schedule_times_in_minutes_[0];
-					this->next_event_index_ = 0;
-				} else {
-					// get new next event
-					this->next_event_raw_ = this->schedule_times_in_minutes_[this->current_event_index_ + 1];
-					this->next_event_index_ = this->current_event_index_ + 1;
-				}
-				// Determine if current event is an "on" or "off" event
-				bool switch_state = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
-				this->event_switch_state_ = switch_state;
-				// Update current state based on mode and event switch state
-				if (this->current_mode_ == SCHEDULE_MODE_AUTO) {
-					if (switch_state) {
-						this->current_state_ = STATE_RUN_ON;
-					} else {
-						this->current_state_ = STATE_RUN_OFF;
-					}
-				}
-
-				else if (this->current_mode_ == SCHEDULE_MODE_EARLY_OFF && this->current_state_ == STATE_RUN_EARLY_OFF ) {
-					if (!switch_state) {
-						this->current_state_ = STATE_RUN_OFF;
-						this->current_mode_ = SCHEDULE_MODE_AUTO; // Reset mode to auto after early off
-					}
-					else {
-						this->current_state_ = STATE_RUN_ON;
-						this->current_mode_ = SCHEDULE_MODE_AUTO; // Reset mode to auto after early off						
-					}
-					this->set_mode_option(this->current_mode_);
-					
-				}
-				else if (this->current_mode_ == SCHEDULE_MODE_BOOST_ON && this->current_state_ == STATE_RUN_BOOST ) {
-					if (switch_state) {
-						this->current_state_ = STATE_RUN_ON;
-						this->current_mode_ = SCHEDULE_MODE_AUTO; // Reset mode to auto after boost
-					}
-					else {
-						this->current_state_ = STATE_RUN_OFF;
-						this->current_mode_ = SCHEDULE_MODE_AUTO; // Reset mode to auto after boost						
-					}
-					this->set_mode_option(this->current_mode_);
-				}
-			}
-		}
-	}		
+        
+        // Check all prerequisites (time, connection, schedule validity)
+        if (!this->check_prerequisites_()) {
+            // Handle state change for error states if needed
+            this->handle_state_change_();
+            return;  // Prerequisites not met, state already set by check_prerequisites_()
+        }
+        
+        // Handle initialization state
+        if (this->current_state_ == STATE_INIT) {
+            this->initialize_schedule_operation_();
+            ESP_LOGI(TAG, "Normal operation, mode = %d State = %d", this->current_mode_, this->current_state_);
+            return;  // Exit to allow next iteration to handle normal operation
+        }
+        
+        // Skip if still in error states
+        if (this->current_state_ == STATE_TIME_INVALID ||
+            this->current_state_ == STATE_SCHEDULE_INVALID ||
+            this->current_state_ == STATE_SCHEDULE_EMPTY) {
+            return;
+        }
+        
+        // Update current state based on mode and event state
+        this->current_state_ = this->mode_to_state_(this->current_mode_, this->event_switch_state_);
+        
+        // Handle state changes - this will only process if state differs from processed_state_
+        this->handle_state_change_();
+        
+        // Check and advance schedule events if time has reached next event
+        this->check_and_advance_events_();
+    }
 }
+//==============================================================================
+// CONFIGURATION AND SETUP METHODS
+//==============================================================================
+
 void Schedule::dump_config() {
     
     ESP_LOGCONFIG(TAG, "Schedule Entity ID: %s", ha_schedule_entity_id_.c_str());
@@ -519,6 +621,10 @@ void Schedule::log_state_flags_() {
              this->schedule_empty_ ? "Y" : "N");
 }
 
+//==============================================================================
+// EVENT MANAGEMENT AND SCHEDULING
+//==============================================================================
+
 // Find the index of the current active event (on or off)
 // Returns the array index of the most recent entry that has occurred
 int16_t Schedule::find_current_event_(uint16_t current_time_minutes) {
@@ -563,6 +669,10 @@ int16_t Schedule::find_current_event_(uint16_t current_time_minutes) {
     
     return current_index;
 }
+//==============================================================================
+// TIME AND FORMATTING UTILITIES
+//==============================================================================
+
 // Helper function to display event time in DDD:HH:MM format
 std::string Schedule::format_event_time_(uint16_t time_minutes) {
     uint8_t day = time_minutes / 1440;  // 1440 minutes in a day
@@ -606,6 +716,10 @@ std::string Schedule::create_event_string_(uint16_t event_raw) {
 	snprintf(buffer, sizeof(buffer), "%s at %s", event_state ? "ON" : "OFF", this->format_event_time_(event_time).c_str());
 	return std::string(buffer);
 }
+//==============================================================================
+// UI UPDATE METHODS (SWITCHES, SENSORS, DISPLAYS)
+//==============================================================================
+
 // Helper function to display the correct current and next events on the sensors
 void Schedule::display_current_next_events_(std::string current_text, std::string next_text) {	
 
@@ -674,7 +788,7 @@ void Schedule::initialize_schedule_operation_() {
         ESP_LOGW(TAG, "No current event found, schedule is empty");
         // Set flags accordingly
         this->schedule_empty_ = true;
-        this->current_state_ = STATE_NOT_VALID;
+        this->current_state_ = STATE_SCHEDULE_EMPTY;
         return;
     }
 
@@ -719,10 +833,11 @@ void Schedule::initialize_schedule_operation_() {
     
     ESP_LOGV(TAG, "Current event index: %d, time: %s, state: %s", 
              current_event_index_, this->format_event_time_(current_event_time).c_str(), in_event ? "ON" : "OFF");
-    this->current_state_ = STATE_INIT_OK;
+    // Set initial state based on current event and mode
+    this->current_state_ = in_event ? STATE_AUTO_ON : STATE_AUTO_OFF;
     // Reset processed_state_ to force state change detection on next loop iteration
     // This ensures outputs are updated even if the new schedule results in the same state
-    this->processed_state_ = STATE_NOT_VALID;
+    this->processed_state_ = STATE_TIME_INVALID;
     ESP_LOGD(TAG, "Schedule operation initialized");
 }
 
@@ -856,6 +971,10 @@ bool Schedule::isValidTime_(const JsonVariantConst &time_obj) const {
     }
     return false;
 }
+
+//==============================================================================
+// PREFERENCE MANAGEMENT (NVS STORAGE)
+//==============================================================================
 
 // Load stored entity ID hash from preferences
 void Schedule::load_entity_id_from_pref_() {
@@ -991,6 +1110,10 @@ void Schedule::save_schedule_to_pref_() {
     ESP_LOGV(TAG, "Schedule times saved to preferences using %u bytes.", this->sched_array_pref_->size());
 }
 
+
+//==============================================================================
+// HOME ASSISTANT INTEGRATION
+//==============================================================================
 
 // Method to setup the automation and action to retrieve the schedule from Home Assistant
 void Schedule::setup_schedule_retrieval_service_() {
@@ -1321,7 +1444,7 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
 	this->current_state_ = STATE_INIT;
     if (is_empty) {
         ESP_LOGI(TAG, "Schedule is empty (no time entries found).");
-        this->current_state_ = STATE_NOT_VALID;
+        this->current_state_ = STATE_SCHEDULE_EMPTY;
     }
     log_state_flags_();
 }
@@ -1461,6 +1584,10 @@ void Schedule::log_schedule_data() {
     ); */
 }
 
+//==============================================================================
+// MODE SELECTION AND CONTROL
+//==============================================================================
+
 // Method to set the schedule's array preference object
 void Schedule::sched_add_pref(ArrayPreferenceBase *array_pref) {
   sched_array_pref_ = array_pref;
@@ -1522,9 +1649,10 @@ void Schedule::set_mode_option(ScheduleMode mode) {
 }
 
 
-// --------------------------------------------------
-// TEST 1: Create preference
-// --------------------------------------------------
+//==============================================================================
+// TEST AND DEBUG METHODS
+//==============================================================================
+
 void Schedule::test_create_preference() {
   if (!sched_array_pref_) return;
 
