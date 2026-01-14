@@ -1,7 +1,6 @@
+#include "esphome.h"
 #include "data_sensor.h"
 #include "schedule.h"
-#include "esphome/core/log.h"
-#include "esphome/core/helpers.h"
 
 namespace esphome {
 namespace schedule {

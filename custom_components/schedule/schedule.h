@@ -1,10 +1,12 @@
 #pragma once
-#include "esphome.h"
 #include "esphome/core/component.h"
 #include "esphome/core/entity_base.h"
 #include "esphome/core/log.h"
 #include "esphome/core/preferences.h"
-#include "esphome/components/api/homeassistant_service.h"
+#include "esphome/core/automation.h"
+#include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
+#include "esphome/components/api/api_server.h"
 #include "esphome/components/json/json_util.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/button/button.h"
@@ -21,6 +23,12 @@
 #include "data_sensor.h"
 
 namespace esphome {
+
+// Forward declarations for API types
+namespace api {
+template <typename... Ts> class HomeAssistantServiceCallAction;
+}
+
 namespace schedule {
 
 // Schedule mode enum matching SCHEDULE_MODE_OPTIONS in Python
@@ -58,6 +66,7 @@ enum ScheduleState {
 // Forward declarations
 class Schedule;
 class ScheduleModeSelect;
+class ScheduleSwitch;
 
 // UpdateScheduleButton class - button to trigger schedule update
 class UpdateScheduleButton : public button::Button, public Component {
@@ -81,35 +90,8 @@ class ScheduleSwitchIndicator : public binary_sensor::BinarySensor, public Compo
   Schedule *schedule_{nullptr};
 };
 
-// ScheduleSwitch class - switch controlled by schedule
-class ScheduleSwitch : public switch_::Switch, public Component {
- public:
-  void set_schedule(Schedule *schedule) { this->schedule_ = schedule; }
-  
-  // Store current sensor values before triggering
-  void set_sensor_value(const std::string &label, float value) {
-    this->sensor_values_[label] = value;
-  }
-  
-  // Get sensor value by label (returns undefined if not found)
-  float get_sensor_value(const std::string &label) const {
-    auto it = this->sensor_values_.find(label);
-    return (it != this->sensor_values_.end()) ? it->second : NAN;
-  }
-  
-  // Check if sensor value exists
-  bool has_sensor_value(const std::string &label) const {
-    return this->sensor_values_.find(label) != this->sensor_values_.end();
-  }
-  
- protected:
-  void write_state(bool state) override;
-  Schedule *schedule_{nullptr};
-  std::map<std::string, float> sensor_values_;
-};
-
-// Schedule class
-class Schedule : public EntityBase, public Component  {
+// Schedule class - base component (doesn't inherit from EntityBase to avoid diamond problem)
+class Schedule : public Component  {
  public:
   struct DataItem {
     std::string label;
@@ -121,13 +103,23 @@ class Schedule : public EntityBase, public Component  {
   // COMPONENT LIFECYCLE METHODS
   //============================================================================
   void setup() override;
-  void loop() override;
-  void dump_config() override;
   float get_setup_priority() const override { return esphome::setup_priority::LATE; }
   
   void set_max_schedule_entries(size_t entries);
   void set_max_schedule_size(size_t size);
   void set_update_schedule_on_reconnect(bool update) { this->update_on_reconnect_ = update; }
+  size_t get_max_schedule_entries() const { return this->schedule_max_entries_; }
+  
+  //============================================================================
+  // INTERNAL IDENTIFICATION (for preferences - set by platform implementation)
+  //============================================================================
+  void sync_from_entity(const std::string &object_id, const std::string &name) {
+    this->object_id_ = object_id;
+    this->name_ = name;
+  }
+  const std::string& get_object_id() const { return this->object_id_; }
+  uint32_t get_object_id_hash() const { return fnv1_hash(this->object_id_); }
+  uint32_t get_preference_hash() const { return this->get_object_id_hash(); }
   
   //============================================================================
   // CONFIGURATION AND SETUP METHODS
@@ -136,9 +128,6 @@ class Schedule : public EntityBase, public Component  {
   void set_mode_select(ScheduleModeSelect *mode_select);
   void set_switch_indicator(ScheduleSwitchIndicator *indicator) {
     this->switch_indicator_ = indicator;
-  }
-  void set_schedule_switch(ScheduleSwitch *schedule_switch) { 
-    this->schedule_switch_ = schedule_switch; 
   }
   void set_current_event_sensor(text_sensor::TextSensor *sensor) {
     this->current_event_sensor_ = sensor;
@@ -158,13 +147,45 @@ class Schedule : public EntityBase, public Component  {
       this->switch_indicator_->publish_switch_state(state);
     }
   }
-  void set_schedule_switch_state(bool state) {
-    if (this->schedule_switch_ != nullptr) {
-      // Update sensor values in the switch before changing state
-      this->update_switch_sensor_values_();
-      this->schedule_switch_->publish_state(state);
-    }
-  }
+  
+  //============================================================================
+  // PLATFORM-SPECIFIC METHODS (to be implemented by derived classes)
+  //============================================================================
+ protected:
+  /** Update the schedule state machine - call this from platform's loop().
+   * 
+   * This performs all schedule logic: checks time validity, HA connection,
+   * processes events, and calls apply_scheduled_state() when state changes.
+   * Platform implementations should call this from their loop() method.
+   */
+  void update_schedule_state();
+  
+  /** Dump base schedule configuration - call from platform's dump_config().
+   * 
+   * This logs the common schedule configuration. Platform implementations
+   * should call this from their dump_config() and add platform-specific info.
+   */
+  void dump_config_base();
+  
+  /** Apply the scheduled on/off state to the platform-specific component.
+   * 
+   * This method must be implemented by each platform (ScheduleSwitch, ScheduleClimate, etc.)
+   * to apply the scheduled state in a platform-appropriate way:
+   * - Switch: just turn on/off
+   * - Climate: turn on/off + set temperature from data sensors
+   * - Cover: open/close + set position from data sensors
+   * - Lock: lock/unlock + set timeout from data sensors
+   * 
+   * Data sensor values are accessible via this->data_sensors_
+   * 
+   * @param on true if schedule indicates ON state, false for OFF state
+   */
+  virtual void apply_scheduled_state(bool on) = 0;
+  
+  // Data sensors are protected so platform implementations can access sensor values
+  std::vector<DataSensor*> data_sensors_;
+  
+ public:
   
   //============================================================================
   // HOME ASSISTANT INTEGRATION
@@ -256,7 +277,6 @@ class Schedule : public EntityBase, public Component  {
   //============================================================================
   void display_current_next_events_(std::string current_text, std::string next_text);
   void set_data_sensors_(int16_t current_index, bool state, bool manual_override);
-  void update_switch_sensor_values_();
   
   //============================================================================
   // PREFERENCE MANAGEMENT HELPERS
@@ -274,6 +294,10 @@ class Schedule : public EntityBase, public Component  {
   // MEMBER VARIABLES
   //============================================================================
   
+  // Entity identification (since Schedule doesn't inherit from EntityBase)
+  std::string object_id_;
+  std::string name_;
+  
   // Preference and configuration
   ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
@@ -284,11 +308,9 @@ class Schedule : public EntityBase, public Component  {
   std::vector<uint16_t> schedule_times_in_minutes_;
   std::vector<uint16_t> factory_reset_values_ = {0xFFFF, 0xFFFF};
   std::vector<DataItem> data_items_;
-  std::vector<DataSensor *> data_sensors_;
   
   // UI components
   ScheduleSwitchIndicator *switch_indicator_{nullptr};
-  ScheduleSwitch *schedule_switch_{nullptr};
   ScheduleModeSelect *mode_select_{nullptr};
   text_sensor::TextSensor *current_event_sensor_{nullptr};
   text_sensor::TextSensor *next_event_sensor_{nullptr};

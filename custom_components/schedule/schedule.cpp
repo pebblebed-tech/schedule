@@ -1,25 +1,25 @@
+#include "esphome.h"
 #include "schedule.h"
 #include "data_sensor.h"
 #include "schedule_mode_select.h"
-#include "esphome/components/api/api_server.h"
-#include "esphome/components/api/homeassistant_service.h"
-#include "esphome/core/application.h"
-#include "esphome/core/automation.h"
-#include "esphome/core/log.h"
-#include "esphome/core/preferences.h"
-#include "esphome/components/json/json_util.h"
-#include "esphome/core/helpers.h"
 
 #include <functional>
+
+namespace esphome {
+namespace schedule {
+
+// Logging tag
+static const char *TAG = "schedule";
 
 // TODO: Add error handling for service call failures
 // TODO: refactor so the schedule switch apprears under switches in yaml as schedule platform
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
 // TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
+// TODO: auto generate indicator, mode select, current & next event and update button if not provided in yaml
 // TODO: Ensure schedule_retrieval_service_ is only setup once
 // Test cases
 // TODO: Check multiple data sensors with different item types
-// TODO: Check multiple schedule switch in a single yaml file
+
 // TODO: Check that select defaults to manual off on first run and saves to preferences
 // TODO: check that sensor options like unit_of_measurement, device_class, state_class etc can be set from yaml
 // TODO: Check logging is correct and useful
@@ -33,11 +33,6 @@
 #ifndef USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON
 #define USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON
 #endif
-
-namespace esphome {
-namespace schedule {
-
-static const char *const TAG = "schedule";
 
 // Constants for schedule time encoding
 static constexpr uint16_t TIME_MASK = 0x3FFF;  // Mask to extract time (bits 0-13)
@@ -77,15 +72,6 @@ void UpdateScheduleButton::press_action() {
     this->schedule_->request_schedule();
   } else {
     ESP_LOGW(TAG, "Update button pressed but schedule is not set");
-  }
-}
-
-void ScheduleSwitch::write_state(bool state) {
-  this->publish_state(state);
-  ESP_LOGI(TAG, "Schedule switch state changed to: %s", state ? "ON" : "OFF");
-  
-  if (this->schedule_ != nullptr) {
-    this->schedule_->update_switch_indicator(state);
   }
 }
 
@@ -223,7 +209,7 @@ void Schedule::handle_state_change_() {
         case STATE_TIME_INVALID:
         case STATE_SCHEDULE_INVALID:
             // Invalid states - turn off and display error
-            this->set_schedule_switch_state(false);
+            this->apply_scheduled_state(false);
             this->update_switch_indicator(false);
             this->display_current_next_events_(
                 this->current_state_ == STATE_TIME_INVALID ? "Time Invalid" : "Schedule Invalid",
@@ -233,21 +219,21 @@ void Schedule::handle_state_change_() {
             
         case STATE_SCHEDULE_EMPTY:
             // Schedule valid but empty - turn off and inform
-            this->set_schedule_switch_state(false);
+            this->apply_scheduled_state(false);
             this->update_switch_indicator(false);
             this->display_current_next_events_("Schedule Empty", "Schedule Empty");
             break;
             
         case STATE_INIT:
             // Initialization state - turn off and display message
-            this->set_schedule_switch_state(false);
+            this->apply_scheduled_state(false);
             this->update_switch_indicator(false);
             this->display_current_next_events_("Initializing", "Initializing");
             break;
             
         case STATE_MAN_OFF:
             // Manual off mode - force off
-            this->set_schedule_switch_state(false);
+            this->apply_scheduled_state(false);
             this->update_switch_indicator(false);
             this->display_current_next_events_("Manual Off", "");
             this->set_data_sensors_(this->current_event_index_, false, true);
@@ -255,7 +241,7 @@ void Schedule::handle_state_change_() {
             
         case STATE_MAN_ON:
             // Manual on mode - force on
-            this->set_schedule_switch_state(true);
+            this->apply_scheduled_state(true);
             this->update_switch_indicator(true);
             this->display_current_next_events_("Manual On", "");
             this->set_data_sensors_(this->current_event_index_, true, true);
@@ -263,7 +249,7 @@ void Schedule::handle_state_change_() {
             
         case STATE_EARLY_OFF:
             // Early-off mode - turn off until next schedule event
-            this->set_schedule_switch_state(false);
+            this->apply_scheduled_state(false);
             this->update_switch_indicator(false);
             this->display_current_next_events_("Early Off", this->create_event_string_(this->next_event_raw_));
             this->set_data_sensors_(this->current_event_index_, false, false);
@@ -271,7 +257,7 @@ void Schedule::handle_state_change_() {
             
         case STATE_BOOST_ON:
             // Boost mode - turn on until next schedule event
-            this->set_schedule_switch_state(true);
+            this->apply_scheduled_state(true);
             this->update_switch_indicator(true);
             this->display_current_next_events_("Boost On", this->create_event_string_(this->next_event_raw_));
             this->set_data_sensors_(this->current_event_index_, true, false);
@@ -279,7 +265,7 @@ void Schedule::handle_state_change_() {
             
         case STATE_AUTO_ON:
             // Auto mode - schedule indicates ON
-            this->set_schedule_switch_state(true);
+            this->apply_scheduled_state(true);
             this->update_switch_indicator(true);
             this->display_current_next_events_(
                 this->create_event_string_(this->current_event_raw_), 
@@ -290,7 +276,7 @@ void Schedule::handle_state_change_() {
             
         case STATE_AUTO_OFF:
             // Auto mode - schedule indicates OFF
-            this->set_schedule_switch_state(false);
+            this->apply_scheduled_state(false);
             this->update_switch_indicator(false);
             this->display_current_next_events_(
                 this->create_event_string_(this->current_event_raw_), 
@@ -470,10 +456,10 @@ void Schedule::check_and_advance_events_() {
 }
 
 //==============================================================================
-// MAIN LOOP AND HELPER METHODS
+// SCHEDULE STATE MACHINE UPDATE (called from platform loop)
 //==============================================================================
 
-void Schedule::loop() {
+void Schedule::update_schedule_state() {
     uint32_t now = millis();
     
     // Periodic logging every 60 seconds
@@ -520,18 +506,19 @@ void Schedule::loop() {
     }
 }
 //==============================================================================
-// CONFIGURATION AND SETUP METHODS
+// CONFIGURATION DUMP (called from platform dump_config)
 //==============================================================================
 
-void Schedule::dump_config() {
+void Schedule::dump_config_base() {
     
+    ESP_LOGCONFIG(TAG, "Schedule (Base) Configuration:");
     ESP_LOGCONFIG(TAG, "Schedule Entity ID: %s", ha_schedule_entity_id_.c_str());
     ESP_LOGCONFIG(TAG, "Max number of entries the schedule can hold: %d", schedule_max_entries_);
     ESP_LOGCONFIG(TAG, "Schedule Max size in bytes: %d", schedule_max_size_);
     ESP_LOGCONFIG(TAG, "Object ID: %s", this->get_object_id().c_str());
     ESP_LOGCONFIG(TAG, "Preference Hash: %u", this->get_preference_hash());
     ESP_LOGCONFIG(TAG, "Object Hash ID: %u", this->get_object_id_hash());
-    ESP_LOGCONFIG(TAG, "name: %s", this->get_name());
+    ESP_LOGCONFIG(TAG, "name: %s", this->name_.c_str());
     ESP_LOGCONFIG(TAG, "Home Assistant connected: %s", this->ha_connected_ ? "Yes" : "No");
     ESP_LOGCONFIG(TAG, "RTC Time valid: %s", this->rtc_time_valid_ ? "Yes" : "No");
     ESP_LOGCONFIG(TAG, "Schedule valid: %s", this->schedule_valid_ ? "Yes" : "No");
@@ -742,21 +729,6 @@ void Schedule::display_current_next_events_(std::string current_text, std::strin
 void Schedule::set_data_sensors_(int16_t event_index, bool switch_state, bool manual_override) {
     for (auto *sensor : this->data_sensors_) {
         sensor->apply_state(event_index, switch_state, manual_override);
-    }
-}
-
-// Update sensor values in the switch before triggering automations
-void Schedule::update_switch_sensor_values_() {
-    if (this->schedule_switch_ == nullptr) {
-        return;
-    }
-    
-    // Copy current sensor values to the switch
-    for (auto *sensor : this->data_sensors_) {
-        float current_value = sensor->state;
-        this->schedule_switch_->set_sensor_value(sensor->get_label(), current_value);
-        ESP_LOGV(TAG, "Updated switch sensor value: %s = %.2f", 
-                 sensor->get_label().c_str(), current_value);
     }
 }
 
@@ -1576,12 +1548,6 @@ void Schedule::log_schedule_data() {
             }
         }
     } 
-    
- /*    ESP_LOGV(TAG, "=== End Schedule Data Dump ===");
-    this->send_ha_notification_(
-        "Test notification from Schedule component after logging schedule data.",
-        "Schedule Warning"
-    ); */
 }
 
 //==============================================================================

@@ -24,10 +24,9 @@ esp32:
     version: recommended
 
 external_components:
-
-- source:
-    type: local
-    path: custom_components
+  - source:
+      type: local
+      path: custom_components
 
 
 # Enable logging
@@ -104,54 +103,6 @@ time:
 
 
 
-schedule:
-  id: testschedule
-  name: "Test Schedule"
-  ha_schedule_entity_id: "schedule.test_sche"
-  max_schedule_size: 100
-  schedule_update_button: Update Schedule
-  schedule_switch_indicator: 
-    id: test_schedule_active
-    name: "Test Schedule Active"
-  schedule_switch:
-    id: test_schedule_switch
-    name: "Test Schedule Switch"
-    on_turn_on:
-      - logger.log: "Test Schedule Switch Turned ON"
-    on_turn_off:
-      - logger.log: "Test Schedule Switch Turned OFF"
-  current_event:
-    name: "Current Event"
-  next_event:
-    name: "Next Event"
-  mode_selector:
-    name: "Schedule Mode"
-  schedule_variables:
-    - id: temp_sensor
-      label: "temp"
-      item_type: float
-      name: "Schedule Temperature"
-      variable_behavior_when_off: LAST_ON_VALUE
-      variable_off_value: 21.5
-      variable_behavior_in_manual_on: MANUAL_VALUE
-      variable_manual_on_value: 22.0
-
-
-
-#    - id: mode_sensor
-#      label: "mode"
-#      item_type: uint8_t
-#      name: "Schedule Mode"
-#   - id: position_sensor
-#      label: "position"
-#      item_type: uint16_t
-#      name: "Schedule Position"
-#    - id: humidity_sensor
-#      label: "humidity"
-#      item_type: int32_t
-#      name: "Schedule Humidity"
-
-
 binary_sensor:
   - platform: status
     name: "Status"
@@ -184,6 +135,62 @@ text_sensor:
       entity_category: diagnostic
 
 switch:
+  - platform: schedule
+    id: testschedule
+    name: "Test Schedule Switch"
+    ha_schedule_entity_id: "schedule.test_sche"
+    max_schedule_size: 100
+    schedule_update_button: Update Schedule
+    schedule_switch_indicator: 
+      id: test_schedule_active
+      name: "Test Schedule Active"
+    current_event:
+      name: "Current Event"
+    next_event:
+      name: "Next Event"
+    mode_selector:
+      name: "Schedule Mode"
+    schedule_variables:
+      - id: temp_sensor
+        label: "temp"
+        item_type: float
+        name: "Schedule Temperature"
+        variable_behavior_when_off: LAST_ON_VALUE
+        variable_off_value: 21.5
+        variable_behavior_in_manual_on: MANUAL_VALUE
+        variable_manual_on_value: 22.0
+    on_turn_on:
+      - logger.log: "Test Schedule Switch Turned ON"
+    on_turn_off:
+      - logger.log: "Test Schedule Switch Turned OFF"
+  - platform: schedule
+    id: testschedule2
+    name: "Test Schedule Switch2"
+    ha_schedule_entity_id: "schedule.test2"
+    max_schedule_size: 20
+    schedule_update_button: Update Schedule2
+    schedule_switch_indicator: 
+      id: test_schedule2_active
+      name: "Test Schedule2 Active"
+    current_event:
+      name: "Current Event2"
+    next_event:
+      name: "Next Event2"
+    mode_selector:
+      name: "Schedule 2 Mode"
+    schedule_variables:
+      - id: temp_sensor2
+        label: "temp"
+        item_type: float
+        name: "Schedule2 Temperature"
+        variable_behavior_when_off: LAST_ON_VALUE
+        variable_off_value: 21.5
+        variable_behavior_in_manual_on: MANUAL_VALUE
+        variable_manual_on_value: 22.0
+    on_turn_on:
+      - logger.log: "Test Schedule 2 Switch Turned ON"
+    on_turn_off:
+      - logger.log: "Test Schedule 2 Switch Turned OFF"  
   - platform: gpio
     pin: GPIO1
     id: relay1
