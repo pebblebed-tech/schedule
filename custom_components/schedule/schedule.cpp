@@ -86,9 +86,13 @@ void Schedule::set_max_schedule_entries(size_t entries) {
     this->schedule_max_entries_ = entries; 
     this->set_max_schedule_size(entries);  //This will set the size of schedule_times_in_minutes_ vector in bytes
 }
-// Setter for max schedule size in bytes adjusted for time pairs and 16bit values EG size in bytes = (entries * 4) + 4
+// Setter for max schedule size in bytes adjusted for storage type
 void Schedule::set_max_schedule_size(size_t size) {
-    this->schedule_max_size_ = (size * 4)+4;  // Each entry has a start and end time so actual size is double, plus 2 for terminator all in 16bit so *2
+    // Use virtual method to get multiplier based on storage type
+    // State-based: 2 (ON + OFF per entry)
+    // Event-based: 1 (EVENT only per entry)
+    size_t multiplier = this->get_storage_multiplier();
+    this->schedule_max_size_ = (size * multiplier) + multiplier;  // entries * multiplier + terminator
     this->schedule_times_in_minutes_.resize(this->schedule_max_size_); 
 }
 
@@ -1288,11 +1292,11 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                 ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
                 return;
             }
-            // Convert "from" and "to" times to minutes and add day offset also for "from" times
-            uint16_t from = this->timeToMinutes_(entry["from"]) + 0x4000; // Set bit 14 for "from" time
-            uint16_t to = this->timeToMinutes_(entry["to"]);
-            work_buffer_.push_back(from + day_offset_minutes);
-            work_buffer_.push_back(to + day_offset_minutes);
+            
+            // EXTENSIBILITY: Call virtual method to parse entry based on storage type
+            // Default (state-based): stores [ON_TIME, OFF_TIME] pairs
+            // Event-based override: stores [EVENT_TIME] singles
+            this->parse_schedule_entry(entry, work_buffer_, day_offset_minutes);
             
             // Check if entry has "data" field
             if (!entry["data"].is<JsonObjectConst>()) {
@@ -1360,12 +1364,18 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
         day_offset_minutes += 1440;
     }
     
-    // Append terminating values with MSB set
-    work_buffer_.push_back(0xFFFF);
-    work_buffer_.push_back(0xFFFF);
+    // Append terminating values - size varies by storage type
+    if (this->get_storage_type() == STORAGE_TYPE_STATE_BASED) {
+        // State-based: [0xFFFF, 0xFFFF]
+        work_buffer_.push_back(0xFFFF);
+        work_buffer_.push_back(0xFFFF);
+    } else {
+        // Event-based: [0xFFFF]
+        work_buffer_.push_back(0xFFFF);
+    }
     
     // Check if schedule is empty (only contains terminator)
-    bool is_empty = (work_buffer_.size() == 2);
+    bool is_empty = (work_buffer_.size() == this->get_storage_multiplier());
     
     // Check size against max size
     if (work_buffer_.size() > this->schedule_max_size_) {
@@ -1420,6 +1430,31 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     }
     log_state_flags_();
 }
+
+//==============================================================================
+// VIRTUAL METHOD IMPLEMENTATIONS FOR STORAGE TYPE EXTENSIBILITY
+//==============================================================================
+
+/**
+ * Default implementation: State-based storage
+ * Parses both "from" and "to" times as [ON, OFF] pair
+ * Override this in derived classes for event-based storage
+ */
+void Schedule::parse_schedule_entry(const JsonObjectConst &entry, 
+                                    std::vector<uint16_t> &work_buffer,
+                                    uint16_t day_offset) {
+    // State-based: Extract both "from" (ON) and "to" (OFF) times
+    uint16_t from = this->timeToMinutes_(entry["from"]) + 0x4000;  // Set bit 14 for ON
+    uint16_t to = this->timeToMinutes_(entry["to"]);                // Bit 14 clear for OFF
+    
+    work_buffer.push_back(from + day_offset);
+    work_buffer.push_back(to + day_offset);
+}
+
+//==============================================================================
+// DATA MANAGEMENT
+//==============================================================================
+
 // Method to add a data item to the schedule's data items list
 void Schedule::add_data_item(const std::string &label, uint16_t value) {
     // Let calculate size in bytes based on type

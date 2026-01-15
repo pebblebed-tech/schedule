@@ -31,6 +31,46 @@ Schedule = schedule_ns.class_("Schedule", cg.Component, cg.EntityBase)
 DataSensor = schedule_ns.class_("DataSensor", sensor.Sensor)
 ArrayPreference = schedule_ns.class_("ArrayPreference", cg.Component)
 
+# Storage type enum for schedule components
+ScheduleStorageType = schedule_ns.enum("ScheduleStorageType")
+STORAGE_TYPES = {
+    "STATE_BASED": ScheduleStorageType.STORAGE_TYPE_STATE_BASED,
+    "EVENT_BASED": ScheduleStorageType.STORAGE_TYPE_EVENT_BASED,
+}
+
+def calculate_schedule_array_size(max_entries, storage_type="state"):
+    """
+    Calculate array preference size based on storage type.
+    
+    Args:
+        max_entries: Maximum number of schedule entries
+        storage_type: 'state' for state-based (default), 'event' for event-based
+    
+    Returns:
+        Size in bytes for ArrayPreference template
+    
+    Storage formats:
+        state: [ON_TIME, OFF_TIME] pairs = 2 uint16_t per entry = 4 bytes
+               + terminator [0xFFFF, 0xFFFF] = 4 bytes
+               Total = (entries * 4) + 4
+        
+        event: [EVENT_TIME] singles = 1 uint16_t per entry = 2 bytes
+               + terminator [0xFFFF] = 2 bytes
+               Total = (entries * 2) + 2  (50% savings!)
+    """
+    if storage_type == 'state' or storage_type == 'state_based':
+        # State-based: [ON, OFF] pairs + [0xFFFF, 0xFFFF] terminator
+        multiplier = 2
+    elif storage_type == 'event' or storage_type == 'event_based':
+        # Event-based: [EVENT] singles + [0xFFFF] terminator  
+        multiplier = 1
+    else:
+        raise ValueError(f"Unknown storage type: {storage_type}. Use 'state' or 'event'")
+    
+    # Each entry is multiplier * 2 bytes (uint16_t)
+    # Plus terminator is also multiplier * 2 bytes
+    return (max_entries * multiplier * 2) + (multiplier * 2)
+
 ITEM_TYPES = {
     "uint8_t": 0,
     "uint16_t": 1,

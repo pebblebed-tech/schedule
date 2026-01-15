@@ -33,6 +33,7 @@ from .. import (
     CONF_MAX_SCHEDULE_SIZE,
     ITEM_TYPES,
     ITEM_TYPE_BYTES,
+    calculate_schedule_array_size,  # NEW: Helper function for array size calculation
 )
 
 CODEOWNERS = ["@pebblebed-tech"]
@@ -112,7 +113,9 @@ async def to_code(config):
     cg.add(var.set_max_schedule_entries(config[CONF_MAX_SCHEDULE_SIZE]))
     
     # Calculate and create array preference for schedule times
-    size = (config[CONF_MAX_SCHEDULE_SIZE] * 2 * 2) + 4
+    # ScheduleSwitch is state-based (stores ON/OFF pairs)
+    size = calculate_schedule_array_size(config[CONF_MAX_SCHEDULE_SIZE], 'state')
+    # Legacy calculation for reference: size = (config[CONF_MAX_SCHEDULE_SIZE] * 2 * 2) + 4
     array_pref = cg.RawExpression(f'new esphome::schedule::ArrayPreference<{size}>()')
     cg.add(var.sched_add_pref(array_pref))
     

@@ -31,6 +31,12 @@ template <typename... Ts> class HomeAssistantServiceCallAction;
 
 namespace schedule {
 
+// Enum for storage type - determines how schedule data is stored
+enum ScheduleStorageType {
+  STORAGE_TYPE_STATE_BASED = 0,  // Stores [ON_TIME, OFF_TIME] pairs (default)
+  STORAGE_TYPE_EVENT_BASED = 1   // Stores [EVENT_TIME] singles only
+};
+
 // Schedule mode enum matching SCHEDULE_MODE_OPTIONS in Python
 enum ScheduleMode {
   SCHEDULE_MODE_MANUAL_OFF = 0,
@@ -98,6 +104,34 @@ class Schedule : public Component  {
     uint16_t value;
     uint16_t size;
   };
+
+  //============================================================================
+  // VIRTUAL METHODS FOR STORAGE TYPE EXTENSIBILITY
+  //============================================================================
+  
+  /** Get the storage type for this schedule component
+   * Default is STATE_BASED for backward compatibility
+   * Override in derived classes for different storage types
+   */
+  virtual ScheduleStorageType get_storage_type() const { 
+    return STORAGE_TYPE_STATE_BASED; 
+  }
+  
+  /** Get storage multiplier for array size calculation 
+   * State-based: 2 (ON + OFF per entry)
+   * Event-based: 1 (EVENT only per entry)
+   */
+  virtual size_t get_storage_multiplier() const {
+    return (get_storage_type() == STORAGE_TYPE_STATE_BASED) ? 2 : 1;
+  }
+  
+  /** Parse a single schedule entry from Home Assistant JSON
+   * Default implementation: state-based (extracts "from" and "to")
+   * Override for event-based (extracts only "from")
+   */
+  virtual void parse_schedule_entry(const JsonObjectConst &entry, 
+                                    std::vector<uint16_t> &work_buffer,
+                                    uint16_t day_offset);
 
   //============================================================================
   // COMPONENT LIFECYCLE METHODS
@@ -230,6 +264,11 @@ class Schedule : public Component  {
   void test_create_preference();
   void test_save_preference();
   void test_load_preference();
+  
+  //============================================================================
+  // TIME AND FORMATTING UTILITIES (used by derived classes)
+  //============================================================================
+  uint16_t timeToMinutes_(const char* time_str);
 
  private:
   //============================================================================
@@ -265,7 +304,6 @@ class Schedule : public Component  {
   //============================================================================
   // TIME AND FORMATTING UTILITIES
   //============================================================================
-  uint16_t timeToMinutes_(const char* time_str);
   bool isValidTime_(const JsonVariantConst &time_obj) const;
   uint16_t time_to_minutes_(auto current_now);
   std::string format_event_time_(uint16_t time_minutes);

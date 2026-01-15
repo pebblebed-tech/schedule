@@ -1,6 +1,6 @@
 #include "esphome.h"
-#include "switch/switch.h"
-#include "schedule.h"
+#include "switch.h"
+#include "../schedule.h"
 
 namespace esphome {
 namespace schedule {
