@@ -31,19 +31,14 @@ template <typename... Ts> class HomeAssistantServiceCallAction;
 
 namespace schedule {
 
+// Constants for schedule event encoding
+static constexpr uint16_t SWITCH_STATE_BIT = 0x4000;  // Bit 14: switch state
+static constexpr uint16_t TIME_MASK = 0x3FFF;         // Bits 0-13: time in minutes
+
 // Enum for storage type - determines how schedule data is stored
 enum ScheduleStorageType {
   STORAGE_TYPE_STATE_BASED = 0,  // Stores [ON_TIME, OFF_TIME] pairs (default)
   STORAGE_TYPE_EVENT_BASED = 1   // Stores [EVENT_TIME] singles only
-};
-
-// Schedule mode enum matching SCHEDULE_MODE_OPTIONS in Python
-enum ScheduleMode {
-  SCHEDULE_MODE_MANUAL_OFF = 0,
-  SCHEDULE_MODE_EARLY_OFF = 1,
-  SCHEDULE_MODE_AUTO = 2,
-  SCHEDULE_MODE_MANUAL_ON = 3,
-  SCHEDULE_MODE_BOOST_ON = 4
 };
 
 // Finite state machine states for loop control
@@ -71,7 +66,6 @@ enum ScheduleState {
 
 // Forward declarations
 class Schedule;
-class ScheduleModeSelect;
 class ScheduleSwitch;
 
 // UpdateScheduleButton class - button to trigger schedule update
@@ -159,7 +153,6 @@ class Schedule : public Component  {
   // CONFIGURATION AND SETUP METHODS
   //============================================================================
   void set_schedule_entity_id(const std::string &ha_schedule_entity_id);
-  void set_mode_select(ScheduleModeSelect *mode_select);
   void set_switch_indicator(ScheduleSwitchIndicator *indicator) {
     this->switch_indicator_ = indicator;
   }
@@ -191,8 +184,8 @@ class Schedule : public Component  {
    * This performs all schedule logic: checks time validity, HA connection,
    * processes events, and calls apply_scheduled_state() when state changes.
    * Platform implementations should call this from their loop() method.
+   * NOTE: This method has been removed - loop() is now implemented in derived classes.
    */
-  void update_schedule_state();
   
   /** Dump base schedule configuration - call from platform's dump_config().
    * 
@@ -215,6 +208,10 @@ class Schedule : public Component  {
    * @param on true if schedule indicates ON state, false for OFF state
    */
   virtual void apply_scheduled_state(bool on) = 0;
+  
+  // Schedule configuration and data (protected for derived class access)
+  size_t schedule_max_entries_{0};
+  std::vector<uint16_t> schedule_times_in_minutes_;
   
   // Data sensors are protected so platform implementations can access sensor values
   std::vector<DataSensor*> data_sensors_;
@@ -240,12 +237,6 @@ class Schedule : public Component  {
   }
   
   //============================================================================
-  // MODE SELECTION AND CONTROL
-  //============================================================================
-  void set_mode_option(ScheduleMode mode);
-  void on_mode_changed(const std::string &mode);
-  
-  //============================================================================
   // DATA MANAGEMENT
   //============================================================================
   void add_data_item(const std::string &label, uint16_t value);
@@ -253,39 +244,31 @@ class Schedule : public Component  {
     return data_items_;
   }
   void print_data_items();
-  void log_schedule_data();
+  virtual void log_schedule_data();  // Virtual - derived classes log their own format
   void register_data_sensor(DataSensor *sensor) {
     this->data_sensors_.push_back(sensor);
   }
 
   //============================================================================
-  // TEST AND DEBUG METHODS
-  //============================================================================
+  // TEST AND DEBUG METHODS\n  //============================================================================
   void test_create_preference();
   void test_save_preference();
   void test_load_preference();
   
+ protected:
   //============================================================================
   // TIME AND FORMATTING UTILITIES (used by derived classes)
   //============================================================================
   uint16_t timeToMinutes_(const char* time_str);
 
- private:
-  //============================================================================
-  // STATE MACHINE HELPER METHODS
-  //============================================================================
-  ScheduleState mode_to_state_(ScheduleMode mode, bool event_on);
-  bool should_reset_to_auto_(ScheduleState state, bool event_on);
-  ScheduleState get_state_after_mode_reset_(bool event_on);
-  void handle_state_change_();
-  
+ protected:
   //============================================================================
   // MAIN LOOP HELPER METHODS
   //============================================================================
   bool check_prerequisites_();
   bool should_advance_to_next_event_(uint16_t current_time_minutes);
-  void advance_to_next_event_();
-  void check_and_advance_events_();
+  virtual void advance_to_next_event_();
+  virtual void check_and_advance_events_();
   
   //============================================================================
   // CONFIGURATION AND SETUP HELPERS
@@ -297,25 +280,32 @@ class Schedule : public Component  {
   //============================================================================
   // EVENT MANAGEMENT AND SCHEDULING
   //============================================================================
-  void initialize_schedule_operation_();
+  virtual void initialize_schedule_operation_();
   void initialize_sensor_last_on_values_(int16_t current_event_index);
+
+ private:
   int16_t find_current_event_(uint16_t current_time_minutes);
   
   //============================================================================
   // TIME AND FORMATTING UTILITIES
   //============================================================================
   bool isValidTime_(const JsonVariantConst &time_obj) const;
-  uint16_t time_to_minutes_(auto current_now);
   std::string format_event_time_(uint16_t time_minutes);
-  std::string create_event_string_(uint16_t event_raw);
   uint16_t get_current_week_minutes_();
   
+ protected:
   //============================================================================
-  // UI UPDATE HELPERS
+  // FORMATTING (Protected for StateBasedSchedulable)
+  //============================================================================
+  std::string create_event_string_(uint16_t event_raw);
+  
+  //============================================================================
+  // UI UPDATE HELPERS (Protected for StateBasedSchedulable)
   //============================================================================
   void display_current_next_events_(std::string current_text, std::string next_text);
   void set_data_sensors_(int16_t current_index, bool state, bool manual_override);
   
+ private:
   //============================================================================
   // PREFERENCE MANAGEMENT HELPERS
   //============================================================================
@@ -339,24 +329,16 @@ class Schedule : public Component  {
   // Preference and configuration
   ArrayPreferenceBase *sched_array_pref_{nullptr};
   size_t schedule_max_size_{0};
-  size_t schedule_max_entries_{0};
   std::string ha_schedule_entity_id_;
   
-  // Schedule data
-  std::vector<uint16_t> schedule_times_in_minutes_;
+  // Schedule data (private core data)
   std::vector<uint16_t> factory_reset_values_ = {0xFFFF, 0xFFFF};
   std::vector<DataItem> data_items_;
   
   // UI components
   ScheduleSwitchIndicator *switch_indicator_{nullptr};
-  ScheduleModeSelect *mode_select_{nullptr};
   text_sensor::TextSensor *current_event_sensor_{nullptr};
   text_sensor::TextSensor *next_event_sensor_{nullptr};
-  
-  // State machine
-  ScheduleMode current_mode_{SCHEDULE_MODE_MANUAL_OFF};
-  ScheduleState current_state_{STATE_INIT};
-  ScheduleState processed_state_{STATE_INIT};
   
   // Status flags
   bool ha_connected_{false};
@@ -369,21 +351,39 @@ class Schedule : public Component  {
   
   // Timing
   uint32_t last_connection_check_{0};
+  
+ protected:
+  // State machine (protected for derived class access)
+  ScheduleState current_state_{STATE_INIT};
+  ScheduleState processed_state_{STATE_INIT};
+  
+  // Timing (protected for derived class access)
   uint32_t last_time_check_{0};
   uint32_t last_state_log_time_{0};
   time::RealTimeClock *time_{nullptr};
   
-  // Event tracking
+  // Time utilities (protected for derived class access)
+  // Template function must be defined in header
+  uint16_t time_to_minutes_(auto current_now) {
+    // Calculate current time in minutes from start of week (Monday = 0)
+    // ESPHome: 1=Sunday, 2=Monday, ..., 7=Saturday
+    // We need: Monday=0, ..., Sunday=6
+    uint8_t day_of_week = (current_now.day_of_week + 5) % 7;  // Convert to Monday=0
+    uint16_t current_time_minutes = (day_of_week * 1440) + (current_now.hour * 60) + current_now.minute;
+    return current_time_minutes;
+  }
+  
+  // Event tracking (protected for state machine access)
   uint16_t current_event_raw_{0};
   uint16_t next_event_raw_{0};
   int16_t current_event_index_{-1};
   int16_t next_event_index_{-1};
-  bool event_switch_state_{false};
   
+ private:
   // Entity ID tracking
   uint32_t stored_entity_id_hash_{0};
 
-protected:
+ protected:
   // Home Assistant service actions
   esphome::api::HomeAssistantServiceCallAction<> *ha_get_schedule_action_{nullptr};
   esphome::api::HomeAssistantServiceCallAction<> *ha_notify_action_{nullptr};

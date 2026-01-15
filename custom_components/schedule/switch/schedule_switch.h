@@ -1,7 +1,7 @@
 #pragma once
 #include "esphome/core/component.h"
 #include "esphome/components/switch/switch.h"
-#include "../schedule.h"
+#include "../state_based_schedulable.h"
 #include <map>
 #include <string>
 
@@ -9,7 +9,7 @@ namespace esphome {
 namespace schedule {
 
 // ScheduleSwitch class - switch that contains schedule logic
-class ScheduleSwitch : public switch_::Switch, public Schedule {
+class ScheduleSwitch : public switch_::Switch, public StateBasedSchedulable {
  public:
   // Store current sensor values before triggering
   void set_sensor_value(const std::string &label, float value) {
@@ -35,7 +35,6 @@ class ScheduleSwitch : public switch_::Switch, public Schedule {
     Schedule::setup();
   }
   
-  void loop() override;
   void dump_config() override;
   
  protected:

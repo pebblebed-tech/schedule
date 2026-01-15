@@ -11,7 +11,7 @@ namespace schedule {
 // Forward declaration
 class Schedule;
 
-class ScheduleModeSelect : public select::Select, public Component {
+class ScheduleStateModeSelect : public select::Select, public Component {
  public:
   void set_on_value_callback(std::function<void(const std::string&)> &&callback) {
     this->on_value_callback_ = callback;

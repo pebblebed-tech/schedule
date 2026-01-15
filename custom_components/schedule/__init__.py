@@ -20,6 +20,8 @@ CONF_HA_SCHEDULE_ENTITY_ID = "ha_schedule_entity_id"
 CONF_SCHEDULE_VARS = "schedule_variables"
 CONF_ITEM_LABEL = "label"
 CONF_ITEM_TYPE = "item_type"
+# Note: The following options are only applicable to state-based schedules (switch, climate, etc.)
+# Event-based schedules (button) don't have OFF states or manual modes
 CONF_OFF_BEHAVIOR = "variable_behavior_when_off"
 CONF_OFF_VALUE = "variable_off_value"
 CONF_MANUAL_BEHAVIOR = "variable_behavior_in_manual_on"
@@ -28,6 +30,8 @@ CONF_MANUAL_VALUE = "variable_manual_on_value"
 # Define the namespace and the C++ class name
 schedule_ns = cg.esphome_ns.namespace("schedule")
 Schedule = schedule_ns.class_("Schedule", cg.Component, cg.EntityBase)
+StateBasedSchedulable = schedule_ns.class_("StateBasedSchedulable", Schedule)
+EventBasedSchedulable = schedule_ns.class_("EventBasedSchedulable", Schedule)
 DataSensor = schedule_ns.class_("DataSensor", sensor.Sensor)
 ArrayPreference = schedule_ns.class_("ArrayPreference", cg.Component)
 
@@ -86,14 +90,16 @@ ITEM_TYPE_BYTES = {
     3: 4,  # float
 }
 
-# Off behavior modes for data sensors
+# Off behavior modes for data sensors (state-based schedules only)
+# Controls what value the sensor shows when schedule is in OFF state
 OFF_BEHAVIORS = {
     "NAN": 0,
     "LAST_ON_VALUE": 1,
     "OFF_VALUE": 2,
 }
 
-# Manual behavior modes for data sensors
+# Manual behavior modes for data sensors (state-based schedules only)
+# Controls what value the sensor shows when schedule is in Manual On mode
 MANUAL_BEHAVIORS = {
     "NAN": 0,
     "LAST_ON_VALUE": 1,
@@ -107,15 +113,11 @@ def validate_manual_value(config):
             raise cv.Invalid(f"{CONF_MANUAL_VALUE} is required when {CONF_MANUAL_BEHAVIOR} is MANUAL_VALUE")
     return config
 
-# Schema for individual data sensor
-DATA_SENSOR_SCHEMA = cv.Schema({
+# Base schema for data sensors (common to all schedule types)
+_DATA_SENSOR_BASE_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(DataSensor),
     cv.Required(CONF_ITEM_LABEL): cv.string,
     cv.Required(CONF_ITEM_TYPE): cv.enum(ITEM_TYPES, lower=True, space="_"),
-    cv.Optional(CONF_OFF_BEHAVIOR, default="NAN"): cv.enum(OFF_BEHAVIORS, upper=True, space="_"),
-    cv.Optional(CONF_OFF_VALUE, default=0.0): cv.float_,
-    cv.Optional(CONF_MANUAL_BEHAVIOR, default="NAN"): cv.enum(MANUAL_BEHAVIORS, upper=True, space="_"),
-    cv.Optional(CONF_MANUAL_VALUE): cv.float_,
 }).extend(cv.COMPONENT_SCHEMA.extend({
     cv.Optional(CONF_ICON): cv.icon,
     cv.Optional(CONF_ENTITY_CATEGORY): cv.entity_category,
@@ -124,11 +126,31 @@ DATA_SENSOR_SCHEMA = cv.Schema({
     accuracy_decimals=1,
 ).extend({
     cv.Optional(sensor.CONF_FILTERS): cv.invalid("Filters are not supported on schedule data sensors")
-})).add_extra(validate_manual_value)
+}))
+
+# Schema for data sensors in STATE-BASED schedules (switch, climate, etc.)
+# Includes OFF and MANUAL behavior options since these schedules have continuous state
+DATA_SENSOR_SCHEMA = _DATA_SENSOR_BASE_SCHEMA.extend({
+    cv.Optional(CONF_OFF_BEHAVIOR, default="NAN"): cv.enum(OFF_BEHAVIORS, upper=True, space="_"),
+    cv.Optional(CONF_OFF_VALUE, default=0.0): cv.float_,
+    cv.Optional(CONF_MANUAL_BEHAVIOR, default="NAN"): cv.enum(MANUAL_BEHAVIORS, upper=True, space="_"),
+    cv.Optional(CONF_MANUAL_VALUE): cv.float_,
+}).add_extra(validate_manual_value)
+
+# Schema for data sensors in EVENT-BASED schedules (button, etc.)
+# Excludes OFF and MANUAL behavior options since event-based schedules don't have continuous state
+DATA_SENSOR_SCHEMA_EVENT_BASED = _DATA_SENSOR_BASE_SCHEMA.extend({
+    cv.Optional(CONF_OFF_BEHAVIOR): cv.invalid("OFF behavior not applicable to event-based schedules"),
+    cv.Optional(CONF_OFF_VALUE): cv.invalid("OFF value not applicable to event-based schedules"),
+    cv.Optional(CONF_MANUAL_BEHAVIOR): cv.invalid("Manual behavior not applicable to event-based schedules"),
+    cv.Optional(CONF_MANUAL_VALUE): cv.invalid("Manual value not applicable to event-based schedules"),
+})
 
 # Empty schema - schedule is a base library component, platforms extend it
 CONFIG_SCHEMA = cv.Schema({})
 
 async def to_code(config):
-    # Nothing to do - this is a library component
+    # Note: state_based_schedulable.cpp and event_based_schedulable.h contain
+    # the implementations for StateBasedSchedulable and EventBasedSchedulable classes.
+    # These files should be automatically compiled by ESPHome's build system.
     pass

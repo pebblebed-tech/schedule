@@ -1,5 +1,5 @@
 #include "esphome.h"
-#include "switch.h"
+#include "schedule_switch.h"
 #include "../schedule.h"
 
 namespace esphome {
@@ -15,11 +15,6 @@ void ScheduleSwitch::write_state(bool state) {
   this->update_switch_indicator(state);
 }
 
-void ScheduleSwitch::loop() {
-  // Call the schedule state machine update
-  this->update_schedule_state();
-}
-
 void ScheduleSwitch::dump_config() {
   LOG_SWITCH("", "Schedule Switch", this);
   // Call base schedule configuration
@@ -27,6 +22,7 @@ void ScheduleSwitch::dump_config() {
 }
 
 // Note: setup() is defined inline in the header
+// Note: loop() is handled by StateBasedSchedulable base class
 
 } // namespace schedule
 } // namespace esphome

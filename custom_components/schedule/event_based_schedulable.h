@@ -39,6 +39,40 @@ class EventBasedSchedulable : public Schedule {
     return 1;  // EVENT only per entry (50% savings!)
   }
   
+  /** Event-based components use simplified loop without state machine 
+   * Only checks for event times and triggers apply_scheduled_state(true)
+   */
+  void loop() override {
+    uint32_t now = millis();
+    
+    // Run every second
+    if (now - this->last_time_check_ >= 1000) {
+      this->last_time_check_ = now;
+      
+      // Check prerequisites (time, connection, schedule validity)
+      if (!this->check_prerequisites_()) {
+        return;
+      }
+      
+      // Handle initialization
+      if (this->current_state_ == STATE_INIT) {
+        this->initialize_schedule_operation_();
+        return;
+      }
+      
+      // Skip if in error states
+      if (this->current_state_ == STATE_TIME_INVALID ||
+          this->current_state_ == STATE_SCHEDULE_INVALID ||
+          this->current_state_ == STATE_SCHEDULE_EMPTY) {
+        return;
+      }
+      
+      // For event-based: just check if we should trigger the event
+      // No state machine - either enabled or disabled
+      this->check_and_advance_events_();
+    }
+  }
+  
  protected:
   /** Parse schedule entry for event-based storage
    * 
@@ -57,6 +91,36 @@ class EventBasedSchedulable : public Schedule {
     
     // NOTE: "to" time from HA schedule is ignored
     // The component only cares about when the event triggers
+  }
+
+  /** Log schedule data in event-based format (single events, not ON/OFF pairs) */
+  void log_schedule_data() override {
+    ESP_LOGI("schedule", "Event-Based Schedule Data:");
+    ESP_LOGI("schedule", "Current Week Minute: %u, Max Entries: %u", this->time_, this->schedule_max_entries_);
+
+    uint16_t *schedule_data = this->schedule_times_in_minutes_.data();
+    size_t index = 0;
+    uint16_t entry_count = 0;
+
+    // Process entries until terminator (0xFFFF) or end of data
+    while (index < this->schedule_times_in_minutes_.size() && schedule_data[index] != 0xFFFF) {
+      uint16_t event_time = schedule_data[index];
+      
+      // Extract event time (mask off state bit)
+      uint16_t time_minutes = event_time & TIME_MASK;
+      uint16_t day = time_minutes / 1440;
+      uint16_t hour = (time_minutes % 1440) / 60;
+      uint16_t minute = time_minutes % 60;
+
+      const char *day_names[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+      ESP_LOGI("schedule", "  Entry %u: EVENT at %s:%02u:%02u (raw: 0x%04X)", 
+               entry_count, day_names[day], hour, minute, event_time);
+
+      index++;
+      entry_count++;
+    }
+
+    ESP_LOGI("schedule", "Total Entries: %u", entry_count);
   }
 };
 
