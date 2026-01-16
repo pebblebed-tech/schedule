@@ -41,29 +41,6 @@ enum ScheduleStorageType {
   STORAGE_TYPE_EVENT_BASED = 1   // Stores [EVENT_TIME] singles only
 };
 
-// Finite state machine states for loop control
-enum ScheduleState {
-  // Error/Invalid states (use when something is wrong)
-  STATE_TIME_INVALID = 0,      // RTC time not synchronized
-  STATE_SCHEDULE_INVALID = 1,  // Schedule data is invalid or not available
-  STATE_SCHEDULE_EMPTY = 2,    // Schedule is valid but has no events
-  
-  // Initialization states
-  STATE_INIT = 3,              // Initializing schedule operation
-  
-  // Manual override states
-  STATE_MAN_OFF = 4,           // Manual override: forced off
-  STATE_MAN_ON = 5,            // Manual override: forced on
-  
-  // Temporary mode states
-  STATE_EARLY_OFF = 6,         // Early-off mode active (temporary override)
-  STATE_BOOST_ON = 7,          // Boost mode active (temporary override)
-  
-  // Auto mode states
-  STATE_AUTO_ON = 8,           // Auto mode: schedule indicates ON
-  STATE_AUTO_OFF = 9           // Auto mode: schedule indicates OFF
-};
-
 // Forward declarations
 class Schedule;
 class ScheduleSwitch;
@@ -265,7 +242,15 @@ class Schedule : public Component  {
   //============================================================================
   // MAIN LOOP HELPER METHODS
   //============================================================================
-  bool check_prerequisites_();
+  // Prerequisite check return values
+  enum PrerequisiteError {
+    PREREQ_OK = 0,
+    PREREQ_TIME_INVALID = 1,
+    PREREQ_SCHEDULE_INVALID = 2,
+    PREREQ_SCHEDULE_EMPTY = 3
+  };
+  
+  PrerequisiteError check_prerequisites_();
   bool should_advance_to_next_event_(uint16_t current_time_minutes);
   virtual void advance_to_next_event_();
   virtual void check_and_advance_events_();
@@ -281,7 +266,6 @@ class Schedule : public Component  {
   // EVENT MANAGEMENT AND SCHEDULING
   //============================================================================
   virtual void initialize_schedule_operation_();
-  void initialize_sensor_last_on_values_(int16_t current_event_index);
 
  private:
   int16_t find_current_event_(uint16_t current_time_minutes);
@@ -290,14 +274,13 @@ class Schedule : public Component  {
   // TIME AND FORMATTING UTILITIES
   //============================================================================
   bool isValidTime_(const JsonVariantConst &time_obj) const;
-  std::string format_event_time_(uint16_t time_minutes);
   uint16_t get_current_week_minutes_();
   
  protected:
   //============================================================================
-  // FORMATTING (Protected for StateBasedSchedulable)
+  // FORMATTING (Protected for derived classes)
   //============================================================================
-  std::string create_event_string_(uint16_t event_raw);
+  std::string format_event_time_(uint16_t time_minutes);
   
   //============================================================================
   // UI UPDATE HELPERS (Protected for StateBasedSchedulable)
@@ -353,10 +336,6 @@ class Schedule : public Component  {
   uint32_t last_connection_check_{0};
   
  protected:
-  // State machine (protected for derived class access)
-  ScheduleState current_state_{STATE_INIT};
-  ScheduleState processed_state_{STATE_INIT};
-  
   // Timing (protected for derived class access)
   uint32_t last_time_check_{0};
   uint32_t last_state_log_time_{0};

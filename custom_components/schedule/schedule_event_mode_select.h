@@ -19,6 +19,10 @@ class ScheduleEventModeSelect : public select::Select, public Component {
     this->on_value_callback_ = callback;
   }
   
+  void set_schedule(Schedule *schedule) {
+    this->schedule_ = schedule;
+  }
+
   void setup() override {
     this->pref_ = global_preferences->make_preference<uint8_t>(this->get_object_id_hash());
     uint8_t index;
@@ -56,10 +60,6 @@ class ScheduleEventModeSelect : public select::Select, public Component {
     if (this->on_value_callback_) {
       this->on_value_callback_(value);
     }
-  }
-  
-  void set_schedule(Schedule *schedule) {
-    this->schedule_ = schedule;
   }
 
  private:

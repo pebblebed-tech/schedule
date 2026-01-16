@@ -150,15 +150,15 @@ switch:
       name: "Next Event"
     mode_selector:
       name: "Schedule Mode"
-    schedule_variables:
+    scheduled_data_items:
       - id: temp_sensor
         label: "temp"
         item_type: float
         name: "Schedule Temperature"
-        variable_behavior_when_off: LAST_ON_VALUE
-        variable_off_value: 21.5
-        variable_behavior_in_manual_on: MANUAL_VALUE
-        variable_manual_on_value: 22.0
+        item_behavior_when_off: LAST_ON_VALUE
+        item_off_value: 21.5
+        item_behavior_in_manual_on: MANUAL_VALUE
+        item_manual_on_value: 22.0
     on_turn_on:
       - logger.log: "Test Schedule Switch Turned ON"
     on_turn_off:
@@ -178,15 +178,15 @@ switch:
       name: "Next Event2"
     mode_selector:
       name: "Schedule 2 Mode"
-    schedule_variables:
+    scheduled_data_items:
       - id: temp_sensor2
         label: "temp"
         item_type: float
         name: "Schedule2 Temperature"
-        variable_behavior_when_off: LAST_ON_VALUE
-        variable_off_value: 21.5
-        variable_behavior_in_manual_on: MANUAL_VALUE
-        variable_manual_on_value: 22.0
+        item_behavior_when_off: LAST_ON_VALUE
+        item_off_value: 21.5
+        item_behavior_in_manual_on: MANUAL_VALUE
+        item_manual_on_value: 22.0
     on_turn_on:
       - logger.log: "Test Schedule 2 Switch Turned ON"
     on_turn_off:
@@ -368,13 +368,30 @@ button:
     internal: false
     entity_category: config
 
-  - platform: template
-    name: "Trigger Webhook Action"
-    id: webhook_button
-    on_press:
-      then:
-        
-        - logger.log: "Hello World"
+
+  - platform: schedule
+    name: "Feed Fish Button"
+    ha_schedule_entity_id: "schedule.fish_feeding"
+    max_schedule_size: 10
+    
+    schedule_update_button:
+      name: "Update Feeding Schedule"
+    
+    current_event:
+      name: "Current Feeding"
+    
+    next_event:
+      name: "Next Feeding"
+    
+    mode_selector:
+      name: "Feeding Schedule Mode"
+    
+    # Event-based schedule variables (NO off_behavior or manual_behavior)
+    scheduled_data_items:
+      - label: "Feed Amount"
+        item_type: uint8_t  # 0-255
+        name: "Feed Amount Sensor" 
+
 
   - platform: template
     name: "Get NVS Stats"

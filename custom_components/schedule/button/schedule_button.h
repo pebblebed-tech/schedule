@@ -11,7 +11,7 @@ class ScheduleButton : public button::Button, public EventBasedSchedulable {
  public:
   void setup() override {
     // Sync entity info from EntityBase (via Button) to Schedule base class
-    this->sync_from_entity(this->get_object_id(), this->get_name().c_str());
+    this->sync_from_entity(this->EntityBase::get_object_id(), this->EntityBase::get_name().c_str());
     // Call EventBasedSchedulable's setup
     EventBasedSchedulable::setup();
   }

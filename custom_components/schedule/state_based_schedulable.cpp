@@ -76,7 +76,7 @@ void StateBasedSchedulable::set_mode_option(ScheduleMode mode) {
 // STATE MACHINE HELPER METHODS
 //==============================================================================
 
-ScheduleState StateBasedSchedulable::mode_to_state_(ScheduleMode mode, bool event_on) {
+int StateBasedSchedulable::mode_to_state_(ScheduleMode mode, bool event_on) {
   switch(mode) {
     case SCHEDULE_MODE_MANUAL_OFF:
       return STATE_MAN_OFF;
@@ -95,7 +95,7 @@ ScheduleState StateBasedSchedulable::mode_to_state_(ScheduleMode mode, bool even
 }
 
 // Check if temporary mode (early-off or boost) should reset to auto
-bool StateBasedSchedulable::should_reset_to_auto_(ScheduleState state, bool event_on) {
+bool StateBasedSchedulable::should_reset_to_auto_(int state, bool event_on) {
   // Early-off mode resets to auto on any schedule event (either ON or OFF)
   if (state == STATE_EARLY_OFF) {
     return true;
@@ -108,7 +108,7 @@ bool StateBasedSchedulable::should_reset_to_auto_(ScheduleState state, bool even
 }
 
 // Get the state after resetting from temporary mode to auto
-ScheduleState StateBasedSchedulable::get_state_after_mode_reset_(bool event_on) {
+int StateBasedSchedulable::get_state_after_mode_reset_(bool event_on) {
   return event_on ? STATE_AUTO_ON : STATE_AUTO_OFF;
 }
 
@@ -158,6 +158,110 @@ void StateBasedSchedulable::initialize_schedule_operation_() {
   // Determine if current event is an "on" or "off" event
   bool in_event = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
   this->event_switch_state_ = in_event;
+  
+  // Initialize last_on_value_ for each data sensor by searching backwards for the most recent ON event
+  this->initialize_sensor_last_on_values_(this->current_event_index_);
+  
+  // Set initial state based on current event and mode
+  this->current_state_ = this->mode_to_state_(this->current_mode_, this->event_switch_state_);
+  
+  // Reset processed_state_ to force state change detection on next loop iteration
+  this->processed_state_ = STATE_TIME_INVALID;
+  
+  ESP_LOGD(TAG, "State-based initialization complete, state: %d", this->current_state_);
+}
+
+// Initialize last_on_value_ for each data sensor by finding the most recent ON event
+void StateBasedSchedulable::initialize_sensor_last_on_values_(int16_t current_event_index) {
+    ESP_LOGV(TAG, "Initializing sensor last_on_value_ from schedule history");
+    
+    // Search backwards from current event to find the most recent ON event
+    // Start from current event and work backwards
+    int16_t search_index = current_event_index;
+    
+    // If current event is an ON event, use it
+    if ((this->schedule_times_in_minutes_[search_index] & SWITCH_STATE_BIT) != 0) {
+        ESP_LOGV(TAG, "Current event is ON, using it for last_on_value_ initialization");
+        uint16_t data_index = search_index / 2;
+        for (auto *sensor : this->data_sensors_) {
+            float value = sensor->get_sensor_value(data_index);
+            sensor->set_last_on_value(value);
+            ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from current ON event at index %d",
+                     sensor->get_label().c_str(), value, search_index);
+        }
+        return;
+    }
+    
+    // Current event is OFF, search backwards for previous ON event
+    search_index--;
+    
+    // Search backwards through this week's schedule
+    while (search_index >= 0) {
+        uint16_t event_raw = this->schedule_times_in_minutes_[search_index];
+        
+        // Check if this is an ON event
+        if ((event_raw & SWITCH_STATE_BIT) != 0) {
+            ESP_LOGV(TAG, "Found previous ON event at index %d", search_index);
+            uint16_t data_index = search_index / 2;
+            for (auto *sensor : this->data_sensors_) {
+                float value = sensor->get_sensor_value(data_index);
+                sensor->set_last_on_value(value);
+                ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from ON event at index %d",
+                         sensor->get_label().c_str(), value, search_index);
+            }
+            return;
+        }
+        search_index--;
+    }
+    
+    // No ON event found in current week, search from end of schedule backwards (previous week rollback)
+    ESP_LOGV(TAG, "No ON event found in current week, searching from end of schedule");
+    
+    // Find the last valid entry in the schedule
+    int16_t last_index = -1;
+    for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
+        if (this->schedule_times_in_minutes_[i] == 0xFFFF) {
+            last_index = i - 1;
+            break;
+        }
+    }
+    
+    if (last_index < 0) {
+        ESP_LOGW(TAG, "Could not find end of schedule, cannot initialize last_on_value_");
+        return;
+    }
+    
+    // Search backwards from end of schedule
+    search_index = last_index;
+    while (search_index >= 0) {
+        uint16_t event_raw = this->schedule_times_in_minutes_[search_index];
+        
+        // Check if this is an ON event
+        if ((event_raw & SWITCH_STATE_BIT) != 0) {
+            ESP_LOGV(TAG, "Found previous week's ON event at index %d", search_index);
+            uint16_t data_index = search_index / 2;
+            for (auto *sensor : this->data_sensors_) {
+                float value = sensor->get_sensor_value(data_index);
+                sensor->set_last_on_value(value);
+                ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from previous week ON event at index %d",
+                         sensor->get_label().c_str(), value, search_index);
+            }
+            return;
+        }
+        search_index--;
+    }
+    
+    // No ON event found in entire schedule
+    ESP_LOGW(TAG, "No ON event found in entire schedule, last_on_value_ remains NaN");
+}
+
+// Create event string for state-based (ON/OFF format)
+std::string StateBasedSchedulable::create_event_string_(uint16_t event_raw) {
+	uint16_t event_time = event_raw & TIME_MASK;
+	bool event_state = (event_raw & SWITCH_STATE_BIT) != 0;
+	char buffer[32];
+	snprintf(buffer, sizeof(buffer), "%s at %s", event_state ? "ON" : "OFF", this->format_event_time_(event_time).c_str());
+	return std::string(buffer);
 }
 
 //==============================================================================

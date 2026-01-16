@@ -17,15 +17,15 @@ DEPENDENCIES = ["api", "time"]
 CONF_SCHEDULE_ID = "schedule_id"
 CONF_MAX_SCHEDULE_SIZE = "max_schedule_size"
 CONF_HA_SCHEDULE_ENTITY_ID = "ha_schedule_entity_id"
-CONF_SCHEDULE_VARS = "schedule_variables"
+CONF_SCHEDULED_DATA_ITEMS = "scheduled_data_items"
 CONF_ITEM_LABEL = "label"
 CONF_ITEM_TYPE = "item_type"
 # Note: The following options are only applicable to state-based schedules (switch, climate, etc.)
 # Event-based schedules (button) don't have OFF states or manual modes
-CONF_OFF_BEHAVIOR = "variable_behavior_when_off"
-CONF_OFF_VALUE = "variable_off_value"
-CONF_MANUAL_BEHAVIOR = "variable_behavior_in_manual_on"
-CONF_MANUAL_VALUE = "variable_manual_on_value"
+CONF_OFF_BEHAVIOR = "item_behavior_when_off"
+CONF_OFF_VALUE = "item_off_value"
+CONF_MANUAL_BEHAVIOR = "item_behavior_in_manual_on"
+CONF_MANUAL_VALUE = "item_manual_on_value"
 
 # Define the namespace and the C++ class name
 schedule_ns = cg.esphome_ns.namespace("schedule")

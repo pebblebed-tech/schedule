@@ -21,7 +21,7 @@ from .. import (
     EventBasedSchedulable,
     DataSensor,
     DATA_SENSOR_SCHEMA_EVENT_BASED,  # Use event-based schema (no OFF/Manual behaviors)
-    CONF_SCHEDULE_VARS,
+    CONF_SCHEDULED_DATA_ITEMS,
     CONF_ITEM_LABEL,
     CONF_ITEM_TYPE,
     CONF_HA_SCHEDULE_ENTITY_ID,
@@ -58,7 +58,7 @@ CONFIG_SCHEMA = esphome_button.button_schema(
 ).extend({
     cv.Required(CONF_HA_SCHEDULE_ENTITY_ID): cv.string,
     cv.Optional(CONF_MAX_SCHEDULE_SIZE, default=21): cv.int_,
-    cv.Optional(CONF_SCHEDULE_VARS): cv.ensure_list(DATA_SENSOR_SCHEMA_EVENT_BASED),
+    cv.Optional(CONF_SCHEDULED_DATA_ITEMS): cv.ensure_list(DATA_SENSOR_SCHEMA_EVENT_BASED),
     cv.Required(CONF_UPDATE_BUTTON): cv.maybe_simple_value(
         button.button_schema(
             UpdateScheduleButton,
@@ -122,13 +122,10 @@ async def to_code(config):
     
     # Create mode_select if configured
     if CONF_MODE_SELECT in config:
-        mode_select_var = await select.new_select(config[CONF_MODE_SELECT])
+        mode_select_var = await select.new_select(config[CONF_MODE_SELECT], options=SCHEDULE_BUTTON_MODE_OPTIONS)
         await cg.register_component(mode_select_var, config[CONF_MODE_SELECT])
         cg.add(mode_select_var.set_schedule(var))
         cg.add(var.set_mode_select(mode_select_var))
-        
-        # Set mode options (simplified for event-based: Disabled, Enabled)
-        cg.add(mode_select_var.traits.set_options(SCHEDULE_BUTTON_MODE_OPTIONS))
     
     # Handle time component
     time_var = await cg.get_variable(config[CONF_TIME_ID])
@@ -138,11 +135,11 @@ async def to_code(config):
     if config[CONF_UPDATE_ON_RECONNECT]:
         cg.add(var.set_update_on_reconnect(True))
     
-    # Handle schedule variables (data sensors)
-    if CONF_SCHEDULE_VARS in config:
-        for sensor_config in config[CONF_SCHEDULE_VARS]:
+    # Handle scheduled data items (data sensors)
+    if CONF_SCHEDULED_DATA_ITEMS in config:
+        for sensor_config in config[CONF_SCHEDULED_DATA_ITEMS]:
             label = sensor_config[CONF_ITEM_LABEL]
-            item_type = sensor_config[CONF_ITEM_TYPE]
+            item_type = ITEM_TYPES[sensor_config[CONF_ITEM_TYPE]]
             
             # Calculate max entries for data sensor
             max_entries = config[CONF_MAX_SCHEDULE_SIZE]
@@ -159,26 +156,8 @@ async def to_code(config):
             cg.add(sens.set_max_schedule_data_entries(max_entries))
             cg.add(sens.set_array_preference(sensor_array_pref))
             
-            # Set off behavior and off value
-            off_behavior_name = sensor_config[CONF_OFF_BEHAVIOR]
-            off_behavior_enum_map = {
-                "NAN": "DATA_SENSOR_OFF_BEHAVIOR_NAN",
-                "LAST_ON_VALUE": "DATA_SENSOR_OFF_BEHAVIOR_LAST_ON_VALUE",
-                "OFF_VALUE": "DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE",
-            }
-            cg.add(sens.set_off_behavior(cg.RawExpression(f'esphome::schedule::{off_behavior_enum_map[off_behavior_name]}')))
-            cg.add(sens.set_off_value(sensor_config[CONF_OFF_VALUE]))
-            
-            # Set manual behavior and manual value
-            manual_behavior_name = sensor_config[CONF_MANUAL_BEHAVIOR]
-            manual_behavior_enum_map = {
-                "NAN": "DATA_SENSOR_MANUAL_BEHAVIOR_NAN",
-                "LAST_ON_VALUE": "DATA_SENSOR_MANUAL_BEHAVIOR_LAST_ON_VALUE",
-                "MANUAL_VALUE": "DATA_SENSOR_MANUAL_BEHAVIOR_MANUAL_VALUE",
-            }
-            cg.add(sens.set_manual_behavior(cg.RawExpression(f'esphome::schedule::{manual_behavior_enum_map[manual_behavior_name]}')))
-            if CONF_MANUAL_VALUE in sensor_config:
-                cg.add(sens.set_manual_value(sensor_config[CONF_MANUAL_VALUE]))
+            # Event-based schedules don't have OFF or Manual states
+            # So we don't set off_behavior, off_value, manual_behavior, or manual_value
             
             # Add data item to schedule component
             cg.add(var.add_data_item(label, item_type))

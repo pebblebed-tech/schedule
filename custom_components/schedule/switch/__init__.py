@@ -23,7 +23,7 @@ from .. import (
     StateBasedSchedulable,
     DataSensor,
     DATA_SENSOR_SCHEMA,
-    CONF_SCHEDULE_VARS,
+    CONF_SCHEDULED_DATA_ITEMS,
     CONF_ITEM_LABEL,
     CONF_ITEM_TYPE,
     CONF_OFF_BEHAVIOR,
@@ -69,7 +69,7 @@ CONFIG_SCHEMA = esphome_switch.switch_schema(
 ).extend({
     cv.Required(CONF_HA_SCHEDULE_ENTITY_ID): cv.string,
     cv.Optional(CONF_MAX_SCHEDULE_SIZE, default=21): cv.int_,
-    cv.Optional(CONF_SCHEDULE_VARS): cv.ensure_list(DATA_SENSOR_SCHEMA),
+    cv.Optional(CONF_SCHEDULED_DATA_ITEMS): cv.ensure_list(DATA_SENSOR_SCHEMA),
     cv.Required(CONF_UPDATE_BUTTON): cv.maybe_simple_value(
         button.button_schema(
             UpdateScheduleButton,
@@ -163,9 +163,9 @@ async def to_code(config):
     # Set update on reconnect flag
     cg.add(var.set_update_schedule_on_reconnect(config[CONF_UPDATE_ON_RECONNECT]))
     
-    # Process schedule variables
-    if CONF_SCHEDULE_VARS in config:
-        for sensor_config in config[CONF_SCHEDULE_VARS]:
+    # Process schedule data items
+    if CONF_SCHEDULED_DATA_ITEMS in config:
+        for sensor_config in config[CONF_SCHEDULED_DATA_ITEMS]:
             label = sensor_config[CONF_ITEM_LABEL]
             item_type = ITEM_TYPES[sensor_config[CONF_ITEM_TYPE]]
             

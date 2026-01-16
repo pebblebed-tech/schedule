@@ -89,7 +89,7 @@ void Schedule::set_max_schedule_size(size_t size) {
     // State-based: 2 (ON + OFF per entry)
     // Event-based: 1 (EVENT only per entry)
     size_t multiplier = this->get_storage_multiplier();
-    this->schedule_max_size_ = (size * multiplier) + multiplier;  // entries * multiplier + terminator
+    this->schedule_max_size_ = (size * multiplier) + 2;  // entries * multiplier + 2-value terminator
     this->schedule_times_in_minutes_.resize(this->schedule_max_size_); 
 }
 
@@ -149,9 +149,6 @@ void Schedule::setup() {
     if (this->next_event_sensor_ != nullptr) {
         this->next_event_sensor_->publish_state("Initializing...");
     }
-    // Initial state is TIME_INVALID until we have a valid time and schedule
-	this->current_state_ = STATE_TIME_INVALID;
-
 }
 
 //==============================================================================
@@ -160,18 +157,12 @@ void Schedule::setup() {
 // Note: handle_state_change_() moved to StateBasedSchedulable - it's state-based only
 
 // Check prerequisites: time validity, HA connection, and schedule validity
-bool Schedule::check_prerequisites_() {
+Schedule::PrerequisiteError Schedule::check_prerequisites_() {
     // Check time validity
     if (!this->rtc_time_valid_) {
         this->check_rtc_time_valid_();
-        // If time is not valid, set state and skip rest
         if (!this->rtc_time_valid_) {
-            // Only log if transitioning to this state
-            if (this->current_state_ != STATE_TIME_INVALID) {
-                ESP_LOGW(TAG, "Time is not valid, schedule operations paused");
-                this->current_state_ = STATE_TIME_INVALID;
-            }
-            return false;
+            return PREREQ_TIME_INVALID;
         }
     }
     
@@ -202,47 +193,23 @@ bool Schedule::check_prerequisites_() {
             }
         }
         
-        // If not connected and schedule is not valid, skip rest
+        // If not connected and schedule is not valid, return error
         if (!this->schedule_valid_ && !this->ha_connected_) {
-            // Only log if transitioning to this state
-            if (this->current_state_ != STATE_SCHEDULE_INVALID) {
-                ESP_LOGW(TAG, "Schedule is not valid and Home Assistant not connected");
-                this->current_state_ = STATE_SCHEDULE_INVALID;
-            }
-            return false;
+            return PREREQ_SCHEDULE_INVALID;
         }
     }
     
     // Check schedule validity
     if (!this->schedule_valid_) {
-        // Only log if transitioning to this state
-        if (this->current_state_ != STATE_SCHEDULE_INVALID) {
-            ESP_LOGW(TAG, "Schedule is not valid, cannot proceed with schedule operation");
-            this->current_state_ = STATE_SCHEDULE_INVALID;
-        }
-        return false;
+        return PREREQ_SCHEDULE_INVALID;
     }
     
     // Check if schedule is empty
     if (this->schedule_empty_) {
-        // Only log if transitioning to this state
-        if (this->current_state_ != STATE_SCHEDULE_EMPTY) {
-            ESP_LOGI(TAG, "Schedule is empty, no events to process");
-            this->current_state_ = STATE_SCHEDULE_EMPTY;
-        }
-        return false;
+        return PREREQ_SCHEDULE_EMPTY;
     }
     
-    // Transition to INIT state if we were in an error state and schedule is now valid
-    if ((this->current_state_ == STATE_TIME_INVALID || 
-         this->current_state_ == STATE_SCHEDULE_INVALID || 
-         this->current_state_ == STATE_SCHEDULE_EMPTY) && 
-        !this->schedule_empty_) {
-        this->current_state_ = STATE_INIT;
-        ESP_LOGV(TAG, "Prerequisites met, transitioning to INIT state");
-    }
-    
-    return true;
+    return PREREQ_OK;
 }
 
 // Check if we should advance to the next event
@@ -480,16 +447,6 @@ std::string Schedule::format_event_time_(uint16_t time_minutes) {
     return std::string(buffer);
 }
 
-// Helper function to get current time in minutes from start of week
-// Helper function to create current event string
-std::string Schedule::create_event_string_(uint16_t event_raw) {
-	uint16_t event_time = event_raw & TIME_MASK;
-	bool event_state = (event_raw & SWITCH_STATE_BIT) != 0;
-	// ESP_LOGV(TAG, "Event raw: 0x%04X, time: %s, state: %s", event_raw, this->format_event_time_(event_time).c_str(), event_state ? "ON" : "OFF");
-	char buffer[32];
-	snprintf(buffer, sizeof(buffer), "%s at %s", event_state ? "ON" : "OFF", this->format_event_time_(event_time).c_str());
-	return std::string(buffer);
-}
 //==============================================================================
 // UI UPDATE METHODS (SWITCHES, SENSORS, DISPLAYS)
 //==============================================================================
@@ -547,7 +504,6 @@ void Schedule::initialize_schedule_operation_() {
         ESP_LOGW(TAG, "No current event found, schedule is empty");
         // Set flags accordingly
         this->schedule_empty_ = true;
-        this->current_state_ = STATE_SCHEDULE_EMPTY;
         return;
     }
 
@@ -582,105 +538,13 @@ void Schedule::initialize_schedule_operation_() {
 	ESP_LOGV(TAG,"current_event_raw_: 0x%04X, next_event_raw_: 0x%04X current_event_index: %d, next_event_index: %d", this->current_event_raw_, this->next_event_raw_, current_event_index_, this->next_event_index_);
     uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
 
-
-    // Initialize last_on_value_ for each data sensor by searching backwards for the most recent ON event
-    this->initialize_sensor_last_on_values_(current_event_index_);
-    
     // Determine if current event is an "on" or "off" event
     bool in_event = (this->current_event_raw_ & SWITCH_STATE_BIT) != 0;
     
     ESP_LOGV(TAG, "Current event index: %d, time: %s, state: %s", 
              current_event_index_, this->format_event_time_(current_event_time).c_str(), in_event ? "ON" : "OFF");
-    // Set initial state based on current event and mode
-    this->current_state_ = in_event ? STATE_AUTO_ON : STATE_AUTO_OFF;
-    // Reset processed_state_ to force state change detection on next loop iteration
-    // This ensures outputs are updated even if the new schedule results in the same state
-    this->processed_state_ = STATE_TIME_INVALID;
+    
     ESP_LOGD(TAG, "Schedule operation initialized");
-}
-
-// Initialize last_on_value_ for each data sensor by finding the most recent ON event
-void Schedule::initialize_sensor_last_on_values_(int16_t current_event_index) {
-    ESP_LOGV(TAG, "Initializing sensor last_on_value_ from schedule history");
-    
-    // Search backwards from current event to find the most recent ON event
-    // Start from current event and work backwards
-    int16_t search_index = current_event_index;
-    
-    // If current event is an ON event, use it
-    if ((this->schedule_times_in_minutes_[search_index] & SWITCH_STATE_BIT) != 0) {
-        ESP_LOGV(TAG, "Current event is ON, using it for last_on_value_ initialization");
-        uint16_t data_index = search_index / 2;
-        for (auto *sensor : this->data_sensors_) {
-            float value = sensor->get_sensor_value(data_index);
-            sensor->set_last_on_value(value);
-            ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from current ON event at index %d",
-                     sensor->get_label().c_str(), value, search_index);
-        }
-        return;
-    }
-    
-    // Current event is OFF, search backwards for previous ON event
-    search_index--;
-    
-    // Search backwards through this week's schedule
-    while (search_index >= 0) {
-        uint16_t event_raw = this->schedule_times_in_minutes_[search_index];
-        
-        // Check if this is an ON event
-        if ((event_raw & SWITCH_STATE_BIT) != 0) {
-            ESP_LOGV(TAG, "Found previous ON event at index %d", search_index);
-            uint16_t data_index = search_index / 2;
-            for (auto *sensor : this->data_sensors_) {
-                float value = sensor->get_sensor_value(data_index);
-                sensor->set_last_on_value(value);
-                ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from ON event at index %d",
-                         sensor->get_label().c_str(), value, search_index);
-            }
-            return;
-        }
-        search_index--;
-    }
-    
-    // No ON event found in current week, search from end of schedule backwards (previous week rollback)
-    ESP_LOGV(TAG, "No ON event found in current week, searching from end of schedule");
-    
-    // Find the last valid entry in the schedule
-    int16_t last_index = -1;
-    for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
-        if (this->schedule_times_in_minutes_[i] == 0xFFFF) {
-            last_index = i - 1;
-            break;
-        }
-    }
-    
-    if (last_index < 0) {
-        ESP_LOGW(TAG, "Could not find end of schedule, cannot initialize last_on_value_");
-        return;
-    }
-    
-    // Search backwards from end of schedule
-    search_index = last_index;
-    while (search_index >= 0) {
-        uint16_t event_raw = this->schedule_times_in_minutes_[search_index];
-        
-        // Check if this is an ON event
-        if ((event_raw & SWITCH_STATE_BIT) != 0) {
-            ESP_LOGV(TAG, "Found previous week's ON event at index %d", search_index);
-            uint16_t data_index = search_index / 2;
-            for (auto *sensor : this->data_sensors_) {
-                float value = sensor->get_sensor_value(data_index);
-                sensor->set_last_on_value(value);
-                ESP_LOGV(TAG, "Sensor '%s' last_on_value_ initialized to %.2f from previous week ON event at index %d",
-                         sensor->get_label().c_str(), value, search_index);
-            }
-            return;
-        }
-        search_index--;
-    }
-    
-    // No ON event found in entire schedule
-    ESP_LOGW(TAG, "No ON event found in entire schedule, last_on_value_ remains NaN");
 }
 
 // Helper function to convert "HH:MM:SS" or "HH:MM" to minutes from start of day
@@ -797,7 +661,7 @@ void Schedule::load_schedule_from_pref_() {
     else {
         uint8_t *buf = this->sched_array_pref_->data();
         std::memcpy(temp_buffer.data(), buf, this->sched_array_pref_->size());
-        // Check for terminator (0xFFFF, 0xFFFF) to determine actual number of entries
+        // Check for terminator [0xFFFF, 0xFFFF] - used by both state-based and event-based
         for (size_t i = 0; i < this->schedule_max_size_; i += 2) {
             if (temp_buffer[i] == 0xFFFF && temp_buffer[i + 1] == 0xFFFF) {
                 ESP_LOGI(TAG, "Found terminator at index %u; actual schedule size is %u entries", 
@@ -1146,15 +1010,9 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
         day_offset_minutes += 1440;
     }
     
-    // Append terminating values - size varies by storage type
-    if (this->get_storage_type() == STORAGE_TYPE_STATE_BASED) {
-        // State-based: [0xFFFF, 0xFFFF]
-        work_buffer_.push_back(0xFFFF);
-        work_buffer_.push_back(0xFFFF);
-    } else {
-        // Event-based: [0xFFFF]
-        work_buffer_.push_back(0xFFFF);
-    }
+    // Append terminating values [0xFFFF, 0xFFFF] - used by both storage types
+    work_buffer_.push_back(0xFFFF);
+    work_buffer_.push_back(0xFFFF);
     
     // Check if schedule is empty (only contains terminator)
     bool is_empty = (work_buffer_.size() == this->get_storage_multiplier());
@@ -1204,11 +1062,9 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     this->schedule_valid_ = true;
     // Set schedule_empty based on whether we found any schedule entries
     this->schedule_empty_ = is_empty;
-    // Set to initialized state so the loop will set current/next events
-	this->current_state_ = STATE_INIT;
+    
     if (is_empty) {
         ESP_LOGI(TAG, "Schedule is empty (no time entries found).");
-        this->current_state_ = STATE_SCHEDULE_EMPTY;
     }
     log_state_flags_();
 }

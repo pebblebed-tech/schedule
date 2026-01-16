@@ -5,14 +5,33 @@
 namespace esphome {
 namespace schedule {
 
+// Forward declaration
+class ScheduleEventModeSelect;
+
+// Event-based schedule states (complete state machine for Button platform)
+enum EventBasedScheduleState {
+  // Error/Invalid states
+  STATE_EVENT_TIME_INVALID = 0,      // RTC time not synchronized
+  STATE_EVENT_SCHEDULE_INVALID = 1,  // Schedule data is invalid or not available
+  STATE_EVENT_SCHEDULE_EMPTY = 2,    // Schedule is valid but has no events
+  
+  // Initialization state
+  STATE_EVENT_INIT = 3,              // Initializing schedule operation
+  
+  // Operational states
+  STATE_EVENT_DISABLED = 4,          // Mode select set to disabled
+  STATE_EVENT_READY = 5              // Ready to process events (enabled)
+};
+
 /**
  * EventBasedSchedulable - For components that only need event triggers
  * 
  * Storage format: [EVENT_TIME] singles (no OFF times)
  * - Each entry uses 1 x uint16_t = 2 bytes
  * - EVENT_TIME: bit 14 = 1, bits 0-13 = time in minutes
+ * - Terminator: 2 x uint16_t (0xFFFF, 0xFFFF) for consistency
  * 
- * **50% storage savings compared to state-based!**
+ * **~50% storage savings compared to state-based!**
  * 
  * Examples: Cover, Lock, Button, Script
  * These components only care about when an event triggers, not maintaining
@@ -23,7 +42,7 @@ namespace schedule {
  * Usage in YAML:
  *   cover:
  *     - platform: schedule
- *       max_schedule_entries: 50  # Needs only 102 bytes (50 * 1 * 2 + 2)
+ *       max_schedule_entries: 50  # Needs only 104 bytes (50 * 1 * 2 + 4)
  */
 class EventBasedSchedulable : public Schedule {
  public:
@@ -39,41 +58,119 @@ class EventBasedSchedulable : public Schedule {
     return 1;  // EVENT only per entry (50% savings!)
   }
   
+  //============================================================================
+  // MODE MANAGEMENT (event-based - simplified Disabled/Enabled only)
+  //============================================================================
+  
+  /** Set the mode select component (simplified - only Disabled/Enabled) */
+  void set_mode_select(ScheduleEventModeSelect *mode_select) {
+    this->mode_select_ = mode_select;
+  }
+  
+  // Logging - event-based format (single events, not ON/OFF pairs)
+  void log_schedule_data() override;
+  
   /** Event-based components use simplified loop without state machine 
    * Only checks for event times and triggers apply_scheduled_state(true)
    */
   void loop() override {
     uint32_t now = millis();
     
+    // Periodic logging every 60 seconds
+    if (now - this->last_state_log_time_ >= 60000) {
+      this->last_state_log_time_ = now;
+      this->log_state_flags_();
+      ESP_LOGV("schedule", "Event-based loop state: %d", this->current_state_);
+    }
+    
     // Run every second
     if (now - this->last_time_check_ >= 1000) {
       this->last_time_check_ = now;
       
-      // Check prerequisites (time, connection, schedule validity)
-      if (!this->check_prerequisites_()) {
+      // Check prerequisites (returns error code)
+      auto prereq_error = this->check_prerequisites_();
+      
+      // Handle prerequisite errors with state transitions
+      if (prereq_error == PREREQ_TIME_INVALID) {
+        if (this->current_state_ != STATE_EVENT_TIME_INVALID) {
+          ESP_LOGW("schedule", "Time is not valid, schedule operations paused");
+          this->current_state_ = STATE_EVENT_TIME_INVALID;
+        }
+        this->display_current_next_events_("Time Invalid", "Time Invalid");
         return;
+      }
+      
+      if (prereq_error == PREREQ_SCHEDULE_INVALID) {
+        if (this->current_state_ != STATE_EVENT_SCHEDULE_INVALID) {
+          ESP_LOGW("schedule", "Schedule is not valid");
+          this->current_state_ = STATE_EVENT_SCHEDULE_INVALID;
+        }
+        this->display_current_next_events_("Schedule Invalid", "Schedule Invalid");
+        return;
+      }
+      
+      if (prereq_error == PREREQ_SCHEDULE_EMPTY) {
+        if (this->current_state_ != STATE_EVENT_SCHEDULE_EMPTY) {
+          ESP_LOGI("schedule", "Schedule is empty, no events to process");
+          this->current_state_ = STATE_EVENT_SCHEDULE_EMPTY;
+        }
+        this->display_current_next_events_("Schedule Empty", "Schedule Empty");
+        return;
+      }
+      
+      // Prerequisites OK - transition from error states to INIT if needed
+      if ((this->current_state_ == STATE_EVENT_TIME_INVALID || 
+           this->current_state_ == STATE_EVENT_SCHEDULE_INVALID || 
+           this->current_state_ == STATE_EVENT_SCHEDULE_EMPTY) && 
+          prereq_error == PREREQ_OK) {
+        this->current_state_ = STATE_EVENT_INIT;
+        ESP_LOGV("schedule", "Prerequisites met, transitioning to INIT state");
       }
       
       // Handle initialization
-      if (this->current_state_ == STATE_INIT) {
+      if (this->current_state_ == STATE_EVENT_INIT) {
+        // Call base class initialization to find current/next events
         this->initialize_schedule_operation_();
+        
+        // Transition to event-ready state and mark that we need initial UI update
+        this->current_state_ = STATE_EVENT_READY;
+        this->needs_initial_ui_update_ = true;
         return;
       }
       
-      // Skip if in error states
-      if (this->current_state_ == STATE_TIME_INVALID ||
-          this->current_state_ == STATE_SCHEDULE_INVALID ||
-          this->current_state_ == STATE_SCHEDULE_EMPTY) {
+      // Check if mode select disabled the schedule
+      if (this->current_state_ == STATE_EVENT_DISABLED) {
+        this->display_current_next_events_("Disabled", "Disabled");
         return;
       }
       
-      // For event-based: just check if we should trigger the event
-      // No state machine - either enabled or disabled
-      this->check_and_advance_events_();
+      // Normal operation - process events
+      if (this->current_state_ == STATE_EVENT_READY) {
+        // Force UI update on first loop after initialization
+        if (this->needs_initial_ui_update_) {
+          this->update_event_based_ui_();
+          this->needs_initial_ui_update_ = false;
+        }
+        
+        // Check if we should trigger the event and update UI if events changed
+        int old_index = this->current_event_index_;
+        this->check_and_advance_events_();
+        if (old_index != this->current_event_index_) {
+          this->update_event_based_ui_();
+        }
+      }
     }
   }
   
  protected:
+  //============================================================================
+  // VIRTUAL METHOD OVERRIDES FROM BASE CLASS
+  //============================================================================
+  
+  void advance_to_next_event_() override;
+  void check_and_advance_events_() override;
+  void initialize_schedule_operation_() override;
+  
   /** Parse schedule entry for event-based storage
    * 
    * Extracts only "from" time as [EVENT] single:
@@ -92,36 +189,26 @@ class EventBasedSchedulable : public Schedule {
     // NOTE: "to" time from HA schedule is ignored
     // The component only cares about when the event triggers
   }
-
-  /** Log schedule data in event-based format (single events, not ON/OFF pairs) */
-  void log_schedule_data() override {
-    ESP_LOGI("schedule", "Event-Based Schedule Data:");
-    ESP_LOGI("schedule", "Current Week Minute: %u, Max Entries: %u", this->time_, this->schedule_max_entries_);
-
-    uint16_t *schedule_data = this->schedule_times_in_minutes_.data();
-    size_t index = 0;
-    uint16_t entry_count = 0;
-
-    // Process entries until terminator (0xFFFF) or end of data
-    while (index < this->schedule_times_in_minutes_.size() && schedule_data[index] != 0xFFFF) {
-      uint16_t event_time = schedule_data[index];
-      
-      // Extract event time (mask off state bit)
-      uint16_t time_minutes = event_time & TIME_MASK;
-      uint16_t day = time_minutes / 1440;
-      uint16_t hour = (time_minutes % 1440) / 60;
-      uint16_t minute = time_minutes % 60;
-
-      const char *day_names[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
-      ESP_LOGI("schedule", "  Entry %u: EVENT at %s:%02u:%02u (raw: 0x%04X)", 
-               entry_count, day_names[day], hour, minute, event_time);
-
-      index++;
-      entry_count++;
-    }
-
-    ESP_LOGI("schedule", "Total Entries: %u", entry_count);
-  }
+  
+  //============================================================================
+  // EVENT-BASED HELPER METHODS
+  //============================================================================
+  
+  /** Update event-based UI (sensors and displays) */
+  void update_event_based_ui_();
+  
+ private:
+  //============================================================================
+  // EVENT-BASED MEMBER VARIABLES
+  //============================================================================
+  
+  ScheduleEventModeSelect *mode_select_{nullptr};
+  
+  // Event-based state machine
+  int current_state_{STATE_EVENT_INIT};
+  
+  // Flag to ensure UI is updated after initialization
+  bool needs_initial_ui_update_{false};
 };
 
 } // namespace schedule
