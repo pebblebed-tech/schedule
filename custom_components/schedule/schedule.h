@@ -161,7 +161,6 @@ class Schedule : public Component  {
    * This performs all schedule logic: checks time validity, HA connection,
    * processes events, and calls apply_scheduled_state() when state changes.
    * Platform implementations should call this from their loop() method.
-   * NOTE: This method has been removed - loop() is now implemented in derived classes.
    */
   
   /** Dump base schedule configuration - call from platform's dump_config().
@@ -227,7 +226,8 @@ class Schedule : public Component  {
   }
 
   //============================================================================
-  // TEST AND DEBUG METHODS\n  //============================================================================
+  // TEST AND DEBUG METHODS
+  //============================================================================
   void test_create_preference();
   void test_save_preference();
   void test_load_preference();

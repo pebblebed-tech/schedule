@@ -10,10 +10,9 @@ namespace schedule {
 // Logging tag
 static const char *TAG = "schedule";
 
-// TODO: Add error handling for service call failures
-// TODO: refactor so the schedule switch apprears under switches in yaml as schedule platform
+
+
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
-// TODO: Add HomeAssitant notify service call on schedule retrieval failure, incorrect values in schedule and oversize schedule
 // TODO: auto generate indicator, mode select, current & next event and update button if not provided in yaml
 // TODO: Ensure schedule_retrieval_service_ is only setup once
 // Test cases
@@ -27,7 +26,7 @@ static const char *TAG = "schedule";
 // TODO: Add Doxygen comments to all methods and classes
 // TODO: Add comments to python so the user knows what each config option does
 
-// This is needed due to a bug in the logic in HomeAsitant Service Call Action with JSON responses
+// This is needed due to a bug in the logic in Home Assistant Service Call Action with JSON responses
 // Define this to enable JSON response handling for HomeAssistant actions
 #ifndef USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON
 #define USE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON
@@ -73,24 +72,25 @@ void UpdateScheduleButton::press_action() {
 }
 
 //==============================================================================
-// SCHEDULE CLASS: COMPONENT LIFECYCLE METHODS
-//==============================================================================
-//==============================================================================
-// SCHEDULE CLASS: COMPONENT LIFECYCLE METHODS
+// COMPONENT LIFECYCLE METHODS
 //==============================================================================
 
 void Schedule::set_max_schedule_entries(size_t entries) {
     this->schedule_max_entries_ = entries; 
     this->set_max_schedule_size(entries);  //This will set the size of schedule_times_in_minutes_ vector in bytes
 }
-// Setter for max schedule size in bytes adjusted for storage type
+
 void Schedule::set_max_schedule_size(size_t size) {
     // Use virtual method to get multiplier based on storage type
     // State-based: 2 (ON + OFF per entry)
     // Event-based: 1 (EVENT only per entry)
     size_t multiplier = this->get_storage_multiplier();
-    this->schedule_max_size_ = (size * multiplier) + 2;  // entries * multiplier + 2-value terminator
+    this->schedule_max_size_ = (size * multiplier) + 2;  // entries * multiplier + 2 uint16_t terminator
     this->schedule_times_in_minutes_.resize(this->schedule_max_size_); 
+}
+
+void Schedule::set_schedule_entity_id(const std::string &ha_schedule_entity_id){
+    this->ha_schedule_entity_id_ = ha_schedule_entity_id;
 }
 
 void Schedule::setup() {
@@ -151,12 +151,29 @@ void Schedule::setup() {
     }
 }
 
+void Schedule::dump_config_base() {
+    ESP_LOGCONFIG(TAG, "Schedule (Base) Configuration:");
+    ESP_LOGCONFIG(TAG, "Schedule Entity ID: %s", ha_schedule_entity_id_.c_str());
+    ESP_LOGCONFIG(TAG, "Max number of entries the schedule can hold: %d", schedule_max_entries_);
+    ESP_LOGCONFIG(TAG, "Schedule Max size in bytes: %d", schedule_max_size_);
+    ESP_LOGCONFIG(TAG, "Object ID: %s", this->get_object_id().c_str());
+    ESP_LOGCONFIG(TAG, "Preference Hash: %u", this->get_preference_hash());
+    ESP_LOGCONFIG(TAG, "Object Hash ID: %u", this->get_object_id_hash());
+    ESP_LOGCONFIG(TAG, "name: %s", this->name_.c_str());
+    ESP_LOGCONFIG(TAG, "Home Assistant connected: %s", this->ha_connected_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "RTC Time valid: %s", this->rtc_time_valid_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "Schedule valid: %s", this->schedule_valid_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "Schedule empty: %s", this->schedule_empty_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG, "Registered Data Sensors:");
+    for (auto *sensor : this->data_sensors_) {
+        sensor->dump_config();
+    }   
+}
+
 //==============================================================================
 // STATE MACHINE HELPER METHODS
 //==============================================================================
-// Note: handle_state_change_() moved to StateBasedSchedulable - it's state-based only
 
-// Check prerequisites: time validity, HA connection, and schedule validity
 Schedule::PrerequisiteError Schedule::check_prerequisites_() {
     // Check time validity
     if (!this->rtc_time_valid_) {
@@ -212,102 +229,6 @@ Schedule::PrerequisiteError Schedule::check_prerequisites_() {
     return PREREQ_OK;
 }
 
-// Check if we should advance to the next event
-bool Schedule::should_advance_to_next_event_(uint16_t current_time_minutes) {
-    uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
-    uint16_t current_event_time = this->current_event_raw_ & TIME_MASK;
-    
-    // Check if schedule wrapped around (next event is earlier in week than current)
-    bool wrapped_around = (next_event_time < current_event_time);
-    
-    // If wrapped around, check if current time has also wrapped (is before current event)
-    // This indicates we've crossed into the new week
-    bool time_has_wrapped = (current_time_minutes < current_event_time);
-    
-    // Debug logging every 60 seconds
-    static uint32_t last_debug_log = 0;
-    if (millis() - last_debug_log >= 60000) {
-        last_debug_log = millis();
-        ESP_LOGD(TAG, "Event check: current_time=%u, next_event=%u, current_event=%u, wrapped=%s, time_wrapped=%s", 
-                 current_time_minutes, next_event_time, current_event_time, 
-                 wrapped_around ? "Y" : "N", time_has_wrapped ? "Y" : "N");
-    }
-    
-    // Advance to next event if:
-    // 1. Current time has reached next event time AND
-    // 2. Either we haven't wrapped, OR we have wrapped AND time has also wrapped
-    return (current_time_minutes >= next_event_time && (!wrapped_around || time_has_wrapped));
-}
-
-// Advance to the next event in the schedule
-void Schedule::advance_to_next_event_() {
-    // Current event becomes the next event
-    this->current_event_raw_ = this->next_event_raw_;
-    this->current_event_index_ = this->next_event_index_;
-    
-    // Check if we've reached the end of the schedule
-    if (this->schedule_times_in_minutes_[this->current_event_index_ + 1] == 0xFFFF) {
-        // End of schedule reached, roll over to start
-        ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
-        this->next_event_raw_ = this->schedule_times_in_minutes_[0];
-        this->next_event_index_ = 0;
-    } else {
-        // Get the next event after current
-        this->next_event_raw_ = this->schedule_times_in_minutes_[this->current_event_index_ + 1];
-        this->next_event_index_ = this->current_event_index_ + 1;
-    }
-}
-
-// Check time and advance events if needed
-void Schedule::check_and_advance_events_() {
-    // Get current time in minutes
-    auto now_time = this->time_->now();
-    uint16_t current_time_minutes = this->time_to_minutes_(now_time);
-    
-    // Check if we should advance to next event
-    if (!this->should_advance_to_next_event_(current_time_minutes)) {
-        return;
-    }
-    
-    // Advance to next event
-    this->advance_to_next_event_();
-}
-
-//==============================================================================
-// STATE MANAGEMENT
-//==============================================================================
-// Note: update_schedule_state() removed - loop() now implemented in derived classes
-
-//==============================================================================
-// CONFIGURATION DUMP (called from platform dump_config)
-//==============================================================================
-
-void Schedule::dump_config_base() {
-    
-    ESP_LOGCONFIG(TAG, "Schedule (Base) Configuration:");
-    ESP_LOGCONFIG(TAG, "Schedule Entity ID: %s", ha_schedule_entity_id_.c_str());
-    ESP_LOGCONFIG(TAG, "Max number of entries the schedule can hold: %d", schedule_max_entries_);
-    ESP_LOGCONFIG(TAG, "Schedule Max size in bytes: %d", schedule_max_size_);
-    ESP_LOGCONFIG(TAG, "Object ID: %s", this->get_object_id().c_str());
-    ESP_LOGCONFIG(TAG, "Preference Hash: %u", this->get_preference_hash());
-    ESP_LOGCONFIG(TAG, "Object Hash ID: %u", this->get_object_id_hash());
-    ESP_LOGCONFIG(TAG, "name: %s", this->name_.c_str());
-    ESP_LOGCONFIG(TAG, "Home Assistant connected: %s", this->ha_connected_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "RTC Time valid: %s", this->rtc_time_valid_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "Schedule valid: %s", this->schedule_valid_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "Schedule empty: %s", this->schedule_empty_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "Registered Data Sensors:");
-    for (auto *sensor : this->data_sensors_) {
-        sensor->dump_config();
-    }   
-
-}
-
-void Schedule::set_schedule_entity_id(const std::string &ha_schedule_entity_id){
-    this->ha_schedule_entity_id_ = ha_schedule_entity_id;
-}
-
-// Check and update RTC time validity
 void Schedule::check_rtc_time_valid_() {
     if (this->time_ != nullptr) {
         auto now = this->time_->now();
@@ -344,7 +265,6 @@ void Schedule::check_rtc_time_valid_() {
     }
 }
 
-// Check and update Home Assistant connection state
 void Schedule::check_ha_connection_() {
     bool connected = api::global_api_server->is_connected();
     
@@ -363,7 +283,6 @@ void Schedule::check_ha_connection_() {
     }
 }
 
-// Log verbose state of boolean flags
 void Schedule::log_state_flags_() {
     ESP_LOGV(TAG, "State flags: HA=%s, RTC=%s, Valid=%s, Empty=%s",
              this->ha_connected_ ? "Y" : "N",
@@ -376,107 +295,6 @@ void Schedule::log_state_flags_() {
 // EVENT MANAGEMENT AND SCHEDULING
 //==============================================================================
 
-// Find the index of the current active event (on or off)
-// Returns the array index of the most recent entry that has occurred
-int16_t Schedule::find_current_event_(uint16_t current_time_minutes) {
-    const uint16_t TIME_MASK = 0x3FFF;  // Mask to extract time (bits 0-13)
-    
-    int16_t current_index = -1;  // No event yet
-    
-
-    for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
-        uint16_t entry_raw = this->schedule_times_in_minutes_[i];
-        
-        // Check for terminator (0xFFFF)
-        if (entry_raw == 0xFFFF) {
-            break;
-        }
-        
-        // Extract time value (mask off top 2 bits)
-        uint16_t entry_time = entry_raw & TIME_MASK;
-        
-        // If this entry's time has passed, it becomes the current event
-        if (entry_time <= current_time_minutes) {
-            current_index = static_cast<int16_t>(i);			
-        } else {
-            // Once we hit a future entry, stop searching
-            break;
-        }
-    }
-   
-    // If no event has occurred yet this week, wrap around to the last event from previous week
-    if (current_index == -1) {
-        // Find the last valid entry in the schedule (before the 0xFFFF terminator)
-        for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
-            if (this->schedule_times_in_minutes_[i] == 0xFFFF) {
-                // Found terminator, the previous entry is the last event
-                if (i > 0) {
-                    current_index = static_cast<int16_t>(i - 1);
-                }
-                break;
-            }
-        }
-    }
-    
-    return current_index;
-}
-//==============================================================================
-// TIME AND FORMATTING UTILITIES
-//==============================================================================
-
-// Helper function to display event time in DDD:HH:MM format
-std::string Schedule::format_event_time_(uint16_t time_minutes) {
-    uint8_t day = time_minutes / 1440;  // 1440 minutes in a day
-	std::string day_str;
-	switch(day) {
-		case 0:	day_str = "Mon"; break;
-		case 1:	day_str = "Tue"; break;	
-		case 2:	day_str = "Wed"; break;
-		case 3:	day_str = "Thu"; break;
-		case 4:	day_str = "Fri"; break;
-		case 5:	day_str = "Sat"; break;	
-		case 6:	day_str = "Sun"; break;
-		default: day_str = "???"; break;
-	}
-    uint16_t minutes_in_day = time_minutes % 1440;
-    uint8_t hour = minutes_in_day / 60;
-    uint8_t minute = minutes_in_day % 60;
-    
-    char buffer[16];
-    snprintf(buffer, sizeof(buffer), "%s:%02u:%02u", day_str.c_str(), hour, minute);
-    return std::string(buffer);
-}
-
-//==============================================================================
-// UI UPDATE METHODS (SWITCHES, SENSORS, DISPLAYS)
-//==============================================================================
-
-// Helper function to display the correct current and next events on the sensors
-void Schedule::display_current_next_events_(std::string current_text, std::string next_text) {	
-
-	if (this->current_event_sensor_ != nullptr) {
-		// Check if sensor is already displaying the correct text
-		if(this->current_event_sensor_->get_state() != current_text) {
-			this->current_event_sensor_->publish_state(current_text);
-		}
-		
-	}
-	if (this->next_event_sensor_ != nullptr) {
-		// Check if sensor is already displaying the correct text
-		if(this->next_event_sensor_->get_state() != next_text) {
-			this->next_event_sensor_->publish_state(next_text);
-		}
-	}
-}
-
-// Set data sensors based on current event index and switch state
-void Schedule::set_data_sensors_(int16_t event_index, bool switch_state, bool manual_override) {
-    for (auto *sensor : this->data_sensors_) {
-        sensor->apply_state(event_index, switch_state, manual_override);
-    }
-}
-
-// Initialize schedule operation - find current and next events
 void Schedule::initialize_schedule_operation_() {
     ESP_LOGI(TAG, "Initializing schedule operation...");
     
@@ -507,9 +325,7 @@ void Schedule::initialize_schedule_operation_() {
         return;
     }
 
-
     // Now set up the current and next event details
-   
     this->current_event_raw_ = this->schedule_times_in_minutes_[current_event_index_];
     uint16_t current_event_time = current_event_raw_ & TIME_MASK;
     
@@ -547,7 +363,135 @@ void Schedule::initialize_schedule_operation_() {
     ESP_LOGD(TAG, "Schedule operation initialized");
 }
 
-// Helper function to convert "HH:MM:SS" or "HH:MM" to minutes from start of day
+int16_t Schedule::find_current_event_(uint16_t current_time_minutes) {
+    const uint16_t TIME_MASK = 0x3FFF;  // Mask to extract time (bits 0-13)
+    
+    int16_t current_index = -1;  // No event yet
+    
+    for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
+        uint16_t entry_raw = this->schedule_times_in_minutes_[i];
+        
+        // Check for terminator (0xFFFF)
+        if (entry_raw == 0xFFFF) {
+            break;
+        }
+        
+        // Extract time value (mask off top 2 bits)
+        uint16_t entry_time = entry_raw & TIME_MASK;
+        
+        // If this entry's time has passed, it becomes the current event
+        if (entry_time <= current_time_minutes) {
+            current_index = static_cast<int16_t>(i);			
+        } else {
+            // Once we hit a future entry, stop searching
+            break;
+        }
+    }
+   
+    // If no event has occurred yet this week, wrap around to the last event from previous week
+    if (current_index == -1) {
+        // Find the last valid entry in the schedule (before the 0xFFFF terminator)
+        for (size_t i = 0; i < this->schedule_times_in_minutes_.size(); i++) {
+            if (this->schedule_times_in_minutes_[i] == 0xFFFF) {
+                // Found terminator, the previous entry is the last event
+                if (i > 0) {
+                    current_index = static_cast<int16_t>(i - 1);
+                }
+                break;
+            }
+        }
+    }
+    
+    return current_index;
+}
+
+bool Schedule::should_advance_to_next_event_(uint16_t current_time_minutes) {
+    uint16_t next_event_time = this->next_event_raw_ & TIME_MASK;
+    uint16_t current_event_time = this->current_event_raw_ & TIME_MASK;
+    
+    // Check if schedule wrapped around (next event is earlier in week than current)
+    bool wrapped_around = (next_event_time < current_event_time);
+    
+    // If wrapped around, check if current time has also wrapped (is before current event)
+    // This indicates we've crossed into the new week
+    bool time_has_wrapped = (current_time_minutes < current_event_time);
+    
+    // Debug logging every 60 seconds
+    static uint32_t last_debug_log = 0;
+    if (millis() - last_debug_log >= 60000) {
+        last_debug_log = millis();
+        ESP_LOGD(TAG, "Event check: current_time=%u, next_event=%u, current_event=%u, wrapped=%s, time_wrapped=%s", 
+                 current_time_minutes, next_event_time, current_event_time, 
+                 wrapped_around ? "Y" : "N", time_has_wrapped ? "Y" : "N");
+    }
+    
+    // Advance to next event if:
+    // 1. Current time has reached next event time AND
+    // 2. Either we haven't wrapped, OR we have wrapped AND time has also wrapped
+    return (current_time_minutes >= next_event_time && (!wrapped_around || time_has_wrapped));
+}
+
+void Schedule::advance_to_next_event_() {
+    // Current event becomes the next event
+    this->current_event_raw_ = this->next_event_raw_;
+    this->current_event_index_ = this->next_event_index_;
+    
+    // Check if we've reached the end of the schedule
+    if (this->schedule_times_in_minutes_[this->current_event_index_ + 1] == 0xFFFF) {
+        // End of schedule reached, roll over to start
+        ESP_LOGI(TAG, "End of schedule reached, rolling over to start of schedule");
+        this->next_event_raw_ = this->schedule_times_in_minutes_[0];
+        this->next_event_index_ = 0;
+    } else {
+        // Get the next event after current
+        this->next_event_raw_ = this->schedule_times_in_minutes_[this->current_event_index_ + 1];
+        this->next_event_index_ = this->current_event_index_ + 1;
+    }
+}
+
+void Schedule::check_and_advance_events_() {
+    // Get current time in minutes
+    auto now_time = this->time_->now();
+    uint16_t current_time_minutes = this->time_to_minutes_(now_time);
+    
+    // Check if we should advance to next event
+    if (!this->should_advance_to_next_event_(current_time_minutes)) {
+        return;
+    }
+    
+    // Advance to next event
+    this->advance_to_next_event_();
+}
+
+//==============================================================================
+// UI UPDATE METHODS
+//==============================================================================
+
+void Schedule::display_current_next_events_(std::string current_text, std::string next_text) {	
+	if (this->current_event_sensor_ != nullptr) {
+		// Check if sensor is already displaying the correct text
+		if(this->current_event_sensor_->get_state() != current_text) {
+			this->current_event_sensor_->publish_state(current_text);
+		}
+	}
+	if (this->next_event_sensor_ != nullptr) {
+		// Check if sensor is already displaying the correct text
+		if(this->next_event_sensor_->get_state() != next_text) {
+			this->next_event_sensor_->publish_state(next_text);
+		}
+	}
+}
+
+void Schedule::set_data_sensors_(int16_t event_index, bool switch_state, bool manual_override) {
+    for (auto *sensor : this->data_sensors_) {
+        sensor->apply_state(event_index, switch_state, manual_override);
+    }
+}
+
+//==============================================================================
+// TIME AND FORMATTING UTILITIES
+//==============================================================================
+
 uint16_t Schedule::timeToMinutes_(const char* time_str) {
     int h = 0, m = 0, s = 0;
     if (sscanf(time_str, "%d:%d:%d", &h, &m, &s) == 3) {
@@ -560,7 +504,6 @@ uint16_t Schedule::timeToMinutes_(const char* time_str) {
     return 0;
 }
 
-// Helper function to get current time in minutes from start of week
 uint16_t Schedule::get_current_week_minutes_() {
     if (this->time_ == nullptr) {
         ESP_LOGW(TAG, "No time component configured");
@@ -581,7 +524,7 @@ uint16_t Schedule::get_current_week_minutes_() {
     
     return current_time_minutes;
 }
-// Check from and to times are valid times eg 00:00:00 through 23:59:59
+
 bool Schedule::isValidTime_(const JsonVariantConst &time_obj) const {
     const char* time_str = time_obj.as<const char*>();
     int h = 0, m = 0, s = 0;
@@ -594,38 +537,32 @@ bool Schedule::isValidTime_(const JsonVariantConst &time_obj) const {
     return false;
 }
 
-//==============================================================================
-// PREFERENCE MANAGEMENT (NVS STORAGE)
-//==============================================================================
-
-// Load stored entity ID hash from preferences
-void Schedule::load_entity_id_from_pref_() {
-    // Create a preference hash for entity ID storage
-    uint32_t entity_pref_hash = fnv1_hash("entity_id") ^ this->get_object_id_hash();
+std::string Schedule::format_event_time_(uint16_t time_minutes) {
+    uint8_t day = time_minutes / 1440;  // 1440 minutes in a day
+	std::string day_str;
+	switch(day) {
+		case 0:	day_str = "Mon"; break;
+		case 1:	day_str = "Tue"; break;	
+		case 2:	day_str = "Wed"; break;
+		case 3:	day_str = "Thu"; break;
+		case 4:	day_str = "Fri"; break;
+		case 5:	day_str = "Sat"; break;	
+		case 6:	day_str = "Sun"; break;
+		default: day_str = "???"; break;
+	}
+    uint16_t minutes_in_day = time_minutes % 1440;
+    uint8_t hour = minutes_in_day / 60;
+    uint8_t minute = minutes_in_day % 60;
     
-    auto restore = global_preferences->make_preference<uint32_t>(entity_pref_hash);
-    
-    if (restore.load(&this->stored_entity_id_hash_)) {
-        ESP_LOGV(TAG, "Loaded stored entity ID hash from preferences: 0x%08X", this->stored_entity_id_hash_);
-    } else {
-        this->stored_entity_id_hash_ = 0;
-        ESP_LOGV(TAG, "No stored entity ID hash found in preferences");
-    }
+    char buffer[16];
+    snprintf(buffer, sizeof(buffer), "%s:%02u:%02u", day_str.c_str(), hour, minute);
+    return std::string(buffer);
 }
 
-// Save current entity ID hash to preferences
-void Schedule::save_entity_id_to_pref_() {
-    uint32_t entity_pref_hash = fnv1_hash("entity_id") ^ this->get_object_id_hash();
-    uint32_t current_hash = fnv1_hash(this->ha_schedule_entity_id_);
-    
-    auto restore = global_preferences->make_preference<uint32_t>(entity_pref_hash);
-    restore.save(&current_hash);
-    this->stored_entity_id_hash_ = current_hash;
-    
-    ESP_LOGV(TAG, "Saved entity ID hash to preferences: 0x%08X", current_hash);
-}
+//==============================================================================
+// PREFERENCE MANAGEMENT
+//==============================================================================
 
-// Create the schedule preference object
 void Schedule::create_schedule_preference() {
     ESP_LOGI(TAG, "Creating schedule preference with key hash: %u", this->get_object_id_hash());
     if (!sched_array_pref_) {
@@ -637,7 +574,6 @@ void Schedule::create_schedule_preference() {
     ESP_LOGV(TAG, "Schedule preference created successfully.");
 }
 
-// Function to load the array from NVS memory
 void Schedule::load_schedule_from_pref_() {
     ESP_LOGV(TAG, "Loading schedule from preferences");
     if (!sched_array_pref_) {
@@ -693,7 +629,7 @@ void Schedule::load_schedule_from_pref_() {
                  static_cast<unsigned>(this->schedule_times_in_minutes_.size()));
         
     } else {
-        // No stored data: use YAML initial values and persist them
+        // No stored data: use factory defaults and persist them
         this->schedule_times_in_minutes_ = this->factory_reset_values_;
         this->schedule_empty_ = true;
         if (this->schedule_times_in_minutes_.size() > this->schedule_max_size_) {
@@ -717,7 +653,6 @@ void Schedule::load_schedule_from_pref_() {
     } 
 }
 
-// Function to save the current schedule to NVS memory
 void Schedule::save_schedule_to_pref_() {
     ESP_LOGV(TAG, "Saving schedule");
     
@@ -732,12 +667,39 @@ void Schedule::save_schedule_to_pref_() {
     ESP_LOGV(TAG, "Schedule times saved to preferences using %u bytes.", this->sched_array_pref_->size());
 }
 
+void Schedule::load_entity_id_from_pref_() {
+    // Create a preference hash for entity ID storage
+    uint32_t entity_pref_hash = fnv1_hash("entity_id") ^ this->get_object_id_hash();
+    
+    auto restore = global_preferences->make_preference<uint32_t>(entity_pref_hash);
+    
+    if (restore.load(&this->stored_entity_id_hash_)) {
+        ESP_LOGV(TAG, "Loaded stored entity ID hash from preferences: 0x%08X", this->stored_entity_id_hash_);
+    } else {
+        this->stored_entity_id_hash_ = 0;
+        ESP_LOGV(TAG, "No stored entity ID hash found in preferences");
+    }
+}
+
+void Schedule::save_entity_id_to_pref_() {
+    uint32_t entity_pref_hash = fnv1_hash("entity_id") ^ this->get_object_id_hash();
+    uint32_t current_hash = fnv1_hash(this->ha_schedule_entity_id_);
+    
+    auto restore = global_preferences->make_preference<uint32_t>(entity_pref_hash);
+    restore.save(&current_hash);
+    this->stored_entity_id_hash_ = current_hash;
+    
+    ESP_LOGV(TAG, "Saved entity ID hash to preferences: 0x%08X", current_hash);
+}
+
+void Schedule::sched_add_pref(ArrayPreferenceBase *array_pref) {
+  sched_array_pref_ = array_pref;
+}
 
 //==============================================================================
 // HOME ASSISTANT INTEGRATION
 //==============================================================================
 
-// Method to setup the automation and action to retrieve the schedule from Home Assistant
 void Schedule::setup_schedule_retrieval_service_() {
      if (this->ha_schedule_entity_id_.empty()) {
         ESP_LOGE(TAG, "Cannot trigger retrieval: schedule_entity_id is empty.");
@@ -750,7 +712,7 @@ void Schedule::setup_schedule_retrieval_service_() {
             ha_connected_ = false;
         return;
         }
-        ESP_LOGI(TAG, "C++ component triggering schedule.get_schedule for %s...", ha_schedule_entity_id_.c_str());
+        ESP_LOGI(TAG, "Setting up schedule.get_schedule service for %s...", ha_schedule_entity_id_.c_str());
         // Get the global API server instance (required for communication)
         api::APIServer *api_server = api::global_api_server;
 
@@ -823,7 +785,6 @@ void Schedule::setup_schedule_retrieval_service_() {
     #endif 
 }
 
-// Method to setup the automation and action to send notifications to Home Assistant
 void Schedule::setup_notification_service_() {
     #ifdef USE_API
         if (esphome::api::global_api_server == nullptr) {
@@ -850,7 +811,7 @@ void Schedule::setup_notification_service_() {
         ESP_LOGW(TAG, "API not enabled - cannot setup notification service");
     #endif
 }
-// Method that sends notifications to Home Assistant
+
 void Schedule::send_ha_notification_(const std::string &message, const std::string &title) {
     #ifdef USE_API
         if (this->ha_notify_action_ == nullptr) {
@@ -872,7 +833,7 @@ void Schedule::send_ha_notification_(const std::string &message, const std::stri
         ESP_LOGW(TAG, "API not enabled - cannot send notification");
     #endif
 }
-// Method to request the schedule from Home Assistant
+
 void Schedule::request_schedule() {
     #ifdef USE_API
         if (this->ha_get_schedule_action_ == nullptr) {
@@ -886,7 +847,6 @@ void Schedule::request_schedule() {
     #endif
 }
 
-// Method to process the schedule data received from Home Assistant
 void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     std::vector<uint16_t> work_buffer_;
     ESP_LOGI(TAG, "Processing received schedule data into integer array for %s...", this->ha_schedule_entity_id_.c_str());
@@ -897,13 +857,15 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     // Safetycheck that the expected entity is present in the response
     if (!response["response"][this->ha_schedule_entity_id_.c_str()].is<JsonObjectConst>()) {
         ESP_LOGW(TAG, "Expected entity '%s' not found in response", this->ha_schedule_entity_id_.c_str());
+        std::string msg = "Schedule retrieval failed: Entity '" + this->ha_schedule_entity_id_ + "' not found in response";
+        this->send_ha_notification_(msg, "Schedule Error");
         return;
     }
     JsonObjectConst schedule = response["response"][this->ha_schedule_entity_id_.c_str()];
     
     work_buffer_.clear();
     
-    // Create work buffers for each data sensor
+    // Create temporary work buffers for each data sensor to collect values during parsing
     std::vector<std::vector<std::string>> data_work_buffers;
     for (size_t i = 0; i < this->data_sensors_.size(); ++i) {
         data_work_buffers.emplace_back(std::vector<std::string>());
@@ -917,6 +879,8 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
         if (!schedule[days[i]].is<JsonArrayConst>()) {
             ESP_LOGE(TAG, "Day '%s' not found in schedule; aborting schedule processing.", days[i]);
             ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+            std::string msg = "Schedule parsing failed: Day '" + std::string(days[i]) + "' not found. Schedule data is corrupted or incomplete.";
+            this->send_ha_notification_(msg, "Schedule Error");
             return;
         }
         JsonArrayConst day_array = schedule[days[i]].as<JsonArrayConst>();
@@ -926,6 +890,8 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
             if (!entry["from"].is<const char*>() || !entry["to"].is<const char*>()) {
                 ESP_LOGE(TAG, "Invalid or missing 'from'/'to' fields in %s; aborting schedule processing.", days[i]);
                 ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+                std::string msg = "Schedule parsing failed: Invalid or missing 'from'/'to' fields in " + std::string(days[i]) + ". Please verify the schedule configuration.";
+                this->send_ha_notification_(msg, "Schedule Error");
                 return;
             }
             
@@ -936,6 +902,10 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                         entry["to"].as<const char*>());
 
                 ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+                std::string msg = "Schedule parsing failed: Invalid time range in " + std::string(days[i]) + 
+                                  " (from='" + std::string(entry["from"].as<const char*>()) + 
+                                  "', to='" + std::string(entry["to"].as<const char*>()) + "'). Please verify the schedule configuration.";
+                this->send_ha_notification_(msg, "Schedule Error");
                 return;
             }
             
@@ -963,6 +933,9 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                     ESP_LOGE(TAG, "Missing data field '%s' in %s entry; aborting schedule processing.", 
                              label.c_str(), days[i]);
                     ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+                    std::string msg = "Schedule parsing failed: Missing data field '" + label + "' in " + 
+                                      std::string(days[i]) + " entry. Please verify the schedule configuration.";
+                    this->send_ha_notification_(msg, "Schedule Error");
                     return;
                 }
                 
@@ -980,6 +953,10 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                             ESP_LOGE(TAG, "Data field '%s' in %s is not an integer type; aborting schedule processing.", 
                                      label.c_str(), days[i]);
                             ESP_LOGE(TAG, "Expected integer for sensor '%s' with item_type %u", label.c_str(), item_type);
+                            std::string msg = "Schedule parsing failed: Data field '" + label + "' in " + 
+                                              std::string(days[i]) + " is not an integer type (expected for item_type " + 
+                                              std::to_string(item_type) + ").";
+                            this->send_ha_notification_(msg, "Schedule Error");
                             return;
                         }
                         value_str = std::to_string(data_value.as<long>());
@@ -990,6 +967,10 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                             ESP_LOGE(TAG, "Data field '%s' in %s is not a numeric type; aborting schedule processing.", 
                                      label.c_str(), days[i]);
                             ESP_LOGE(TAG, "Expected numeric for sensor '%s' with item_type %u", label.c_str(), item_type);
+                            std::string msg = "Schedule parsing failed: Data field '" + label + "' in " + 
+                                              std::string(days[i]) + " is not a numeric type (expected for item_type " + 
+                                              std::to_string(item_type) + ").";
+                            this->send_ha_notification_(msg, "Schedule Error");
                             return;
                         }
                         value_str = std::to_string(data_value.as<float>());
@@ -998,6 +979,9 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                     default:
                         ESP_LOGE(TAG, "Unknown item_type %u for sensor '%s'; aborting schedule processing.", 
                                  item_type, label.c_str());
+                        std::string msg = "Schedule parsing failed: Unknown item_type " + std::to_string(item_type) + 
+                                          " for sensor '" + label + "'. Expected types: 0=uint8_t, 1=uint16_t, 2=int32_t, 3=float.";
+                        this->send_ha_notification_(msg, "Schedule Error");
                         return;
                 }
                 
@@ -1021,6 +1005,10 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     if (work_buffer_.size() > this->schedule_max_size_) {
         ESP_LOGW(TAG, "Received schedule (%u entries) exceeds max size (%u); truncating.", 
                  static_cast<unsigned>(work_buffer_.size()), static_cast<unsigned>(this->schedule_max_size_));
+        std::string msg = "Schedule too large: Received " + std::to_string(work_buffer_.size()) + 
+                          " entries but max size is " + std::to_string(this->schedule_max_size_) + 
+                          ". Schedule has been truncated. Consider reducing schedule complexity or increasing max_schedule_size.";
+        this->send_ha_notification_(msg, "Schedule Warning");
         work_buffer_.resize(this->schedule_max_size_);
         
         // Truncate data work buffers to match
@@ -1069,15 +1057,6 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     log_state_flags_();
 }
 
-//==============================================================================
-// VIRTUAL METHOD IMPLEMENTATIONS FOR STORAGE TYPE EXTENSIBILITY
-//==============================================================================
-
-/**
- * Default implementation: State-based storage
- * Parses both "from" and "to" times as [ON, OFF] pair
- * Override this in derived classes for event-based storage
- */
 void Schedule::parse_schedule_entry(const JsonObjectConst &entry, 
                                     std::vector<uint16_t> &work_buffer,
                                     uint16_t day_offset) {
@@ -1093,7 +1072,6 @@ void Schedule::parse_schedule_entry(const JsonObjectConst &entry,
 // DATA MANAGEMENT
 //==============================================================================
 
-// Method to add a data item to the schedule's data items list
 void Schedule::add_data_item(const std::string &label, uint16_t value) {
     // Let calculate size in bytes based on type
     uint16_t size;
@@ -1117,7 +1095,7 @@ void Schedule::add_data_item(const std::string &label, uint16_t value) {
     // Add to schedule data items list
     data_items_.emplace_back(DataItem{label, value, size});
 }
-// Log all data items for debugging
+
 void Schedule::print_data_items() {
         for (const auto& item : data_items_) {
             ESP_LOGD(TAG, "Data Item - Label: %s, Value: %u, Size: %u", item.label.c_str(), item.value, item.size);
@@ -1226,32 +1204,16 @@ void Schedule::log_schedule_data() {
 }
 
 //==============================================================================
-// MODE SELECTION AND CONTROL
-//==============================================================================
-
-// Method to set the schedule's array preference object
-void Schedule::sched_add_pref(ArrayPreferenceBase *array_pref) {
-  sched_array_pref_ = array_pref;
-
-}
-
-// Callback when mode select changes from Home Assistant
-//==============================================================================
 // TEST AND DEBUG METHODS
 //==============================================================================
 
 void Schedule::test_create_preference() {
   if (!sched_array_pref_) return;
 
-
   sched_array_pref_->create_preference(this->get_object_id_hash());
-
   ESP_LOGI(TAG, "test_create_preference: key=0x%08X", this->get_object_id_hash());
 }
 
-// --------------------------------------------------
-// TEST 2: Save preference (write bytes 0..99)
-// --------------------------------------------------
 void Schedule::test_save_preference() {
   if (!sched_array_pref_) return;
 
@@ -1266,9 +1228,6 @@ void Schedule::test_save_preference() {
   ESP_LOGI(TAG, "test_save_preference: wrote %u bytes", (unsigned)limit);
 }
 
-// --------------------------------------------------
-// TEST 3: Load preference and log bytes
-// --------------------------------------------------
 void Schedule::test_load_preference() {
   if (!sched_array_pref_) return;
 
@@ -1285,8 +1244,6 @@ void Schedule::test_load_preference() {
     ESP_LOGI(TAG, "  [%u] = %u", (unsigned)i, buf[i]);
   }
 }
-
-
 
 } // namespace schedule
 } // namespace esphome

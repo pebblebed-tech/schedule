@@ -53,6 +53,29 @@ SCHEDULE_BUTTON_MODE_OPTIONS = [
     "Enabled"
 ]
 
+def add_default_ids(config):
+    """Add default IDs for optional components based on the button ID."""
+    button_id = config[CONF_ID]
+    base_id = button_id.id
+    
+    # Auto-generate current event sensor ID if not provided
+    if CONF_CURRENT_EVENT in config and CONF_ID not in config[CONF_CURRENT_EVENT]:
+        config[CONF_CURRENT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_current_event_sensor")
+    
+    # Auto-generate next event sensor ID if not provided
+    if CONF_NEXT_EVENT in config and CONF_ID not in config[CONF_NEXT_EVENT]:
+        config[CONF_NEXT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_next_event_sensor")
+    
+    # Auto-generate mode select ID if not provided
+    if CONF_MODE_SELECT in config and CONF_ID not in config[CONF_MODE_SELECT]:
+        config[CONF_MODE_SELECT][CONF_ID] = cv.declare_id(ScheduleEventModeSelect)(f"{base_id}_mode_select")
+    
+    # Update button always gets auto-generated ID
+    if CONF_ID not in config[CONF_UPDATE_BUTTON]:
+        config[CONF_UPDATE_BUTTON][CONF_ID] = cv.declare_id(UpdateScheduleButton)(f"{base_id}_update_button")
+    
+    return config
+
 CONFIG_SCHEMA = esphome_button.button_schema(
     ScheduleButton,
 ).extend({
@@ -74,7 +97,7 @@ CONFIG_SCHEMA = esphome_button.button_schema(
         text_sensor.text_sensor_schema(),
         key=CONF_NAME,
     ),
-    cv.Optional(CONF_MODE_SELECT): cv.maybe_simple_value(
+    cv.Required(CONF_MODE_SELECT): cv.maybe_simple_value(
         select.select_schema(
             ScheduleEventModeSelect,
             entity_category=ENTITY_CATEGORY_CONFIG,
@@ -86,6 +109,9 @@ CONFIG_SCHEMA = esphome_button.button_schema(
     ),
     cv.Optional(CONF_UPDATE_ON_RECONNECT, default=False): cv.boolean,
 }).extend(cv.COMPONENT_SCHEMA)
+
+# Apply default ID generation
+CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, add_default_ids)
 
 async def to_code(config):
     # Create the button (which extends EventBasedSchedulable)
@@ -120,12 +146,11 @@ async def to_code(config):
         next_event_var = await text_sensor.new_text_sensor(config[CONF_NEXT_EVENT])
         cg.add(var.set_next_event_sensor(next_event_var))
     
-    # Create mode_select if configured
-    if CONF_MODE_SELECT in config:
-        mode_select_var = await select.new_select(config[CONF_MODE_SELECT], options=SCHEDULE_BUTTON_MODE_OPTIONS)
-        await cg.register_component(mode_select_var, config[CONF_MODE_SELECT])
-        cg.add(mode_select_var.set_schedule(var))
-        cg.add(var.set_mode_select(mode_select_var))
+    # Create mode_select (required)
+    mode_select_var = await select.new_select(config[CONF_MODE_SELECT], options=SCHEDULE_BUTTON_MODE_OPTIONS)
+    await cg.register_component(mode_select_var, config[CONF_MODE_SELECT])
+    cg.add(mode_select_var.set_schedule(var))
+    cg.add(var.set_mode_select(mode_select_var))
     
     # Handle time component
     time_var = await cg.get_variable(config[CONF_TIME_ID])

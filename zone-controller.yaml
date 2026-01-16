@@ -142,14 +142,13 @@ switch:
     max_schedule_size: 100
     schedule_update_button: Update Schedule
     schedule_switch_indicator: 
-      id: test_schedule_active
       name: "Test Schedule Active"
     current_event:
       name: "Current Event"
     next_event:
       name: "Next Event"
     mode_selector:
-      name: "Schedule Mode"
+      name: "Schedule Mode" 
     scheduled_data_items:
       - id: temp_sensor
         label: "temp"

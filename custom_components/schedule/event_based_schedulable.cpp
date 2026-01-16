@@ -66,7 +66,7 @@ void EventBasedSchedulable::update_event_based_ui_() {
 
 void EventBasedSchedulable::log_schedule_data() {
   ESP_LOGI(TAG, "Event-Based Schedule Data:");
-  ESP_LOGI(TAG, "Current Week Minute: %u, Max Entries: %u", this->time_, this->schedule_max_entries_);
+  ESP_LOGI(TAG, "Max Entries: %u", this->schedule_max_entries_);
 
   uint16_t *schedule_data = this->schedule_times_in_minutes_.data();
   size_t index = 0;
