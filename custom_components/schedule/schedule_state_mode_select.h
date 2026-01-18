@@ -37,6 +37,38 @@ class ScheduleStateModeSelect : public select::Select, public Component {
     }
   }
   
+  // Set manual-only mode (schedule is empty)
+  void set_manual_only_mode(bool manual_only) {
+    if (manual_only) {
+      // Only allow manual modes
+      this->traits.set_options({"Manual Off", "Manual On"});
+    } else {
+      // Allow all modes
+      this->traits.set_options({"Manual Off", "Early Off", "Auto", "Manual On", "Boost On"});
+    }
+    
+    // If current mode is not in new options, switch to Manual Off
+    const auto &options = this->traits.get_options();
+    std::string current = this->current_option();
+    bool found = false;
+    for (const auto &opt : options) {
+      if (opt == current) {
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) {
+      this->publish_state("Manual Off");
+      if (this->on_value_callback_) {
+        this->on_value_callback_("Manual Off");
+      }
+    } else {
+      // Re-publish current state to notify HA of trait changes
+      this->publish_state(current);
+    }
+  }
+  
  
  protected:
   void control(const std::string &value) override {

@@ -41,6 +41,17 @@ void StateBasedSchedulable::on_mode_changed(const std::string &mode) {
   ESP_LOGD(TAG, "Current mode enum set to: %d", this->current_mode_);
 }
 
+void StateBasedSchedulable::on_schedule_empty_changed(bool is_empty) {
+  if (this->mode_select_ != nullptr) {
+    this->mode_select_->set_manual_only_mode(is_empty);
+    if (is_empty) {
+      ESP_LOGI(TAG, "Schedule empty - restricting to manual modes only");
+    } else {
+      ESP_LOGI(TAG, "Schedule populated - all modes available");
+    }
+  }
+}
+
 // Set the mode select option programmatically using enum
 void StateBasedSchedulable::set_mode_option(ScheduleMode mode) {
   if (this->mode_select_ != nullptr) {

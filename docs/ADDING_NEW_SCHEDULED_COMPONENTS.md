@@ -1,4 +1,4 @@
-# Adding New Schedule Platforms
+# Adding New Scheduled Components
 
 This guide provides step-by-step instructions for adding new state-based or event-based schedule platforms.
 

@@ -13,8 +13,9 @@ static const char *TAG = "schedule";
 
 
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
-// TODO: auto generate indicator, mode select, current & next event and update button if not provided in yaml
+//TODO: remove auto ID recreation and update docs
 // TODO: Ensure schedule_retrieval_service_ is only setup once
+// TODO: check the use of state in the examples in the docs
 // Test cases
 // TODO: Check multiple data sensors with different item types
 
@@ -64,7 +65,7 @@ class MyErrorTrigger : public Trigger<std::string> {
 
 void UpdateScheduleButton::press_action() {
   if (this->schedule_ != nullptr) {
-    ESP_LOGI(TAG, "Update button pressed, requesting schedule update...");
+    ESP_LOGI(TAG, "Update button pressed, requesting schedule");
     this->schedule_->request_schedule();
   } else {
     ESP_LOGW(TAG, "Update button pressed but schedule is not set");
@@ -94,7 +95,7 @@ void Schedule::set_schedule_entity_id(const std::string &ha_schedule_entity_id){
 }
 
 void Schedule::setup() {
-    ESP_LOGI(TAG, "Setting up Schedule component...");
+    ESP_LOGI(TAG, "Setting up");
     
     // Check if device time is valid
     this->check_rtc_time_valid_();
@@ -125,11 +126,15 @@ void Schedule::setup() {
     this->ha_connected_ = api::global_api_server->is_connected();
     ESP_LOGI(TAG, "Initial Home Assistant API connection status: %s", this->ha_connected_ ? "connected" : "disconnected");
     this->last_connection_check_ = millis();
+    
+    // Notify derived class of initial empty state (for mode select initialization)
+    this->on_schedule_empty_changed(this->schedule_empty_);
+    
    // If get schedule on reconnect is set and we are connected request schedule or if schedule is not valid or entity ID changed
     if ((this->ha_connected_ && this->update_on_reconnect_) || 
         (this->ha_connected_ && this->schedule_valid_ == false) ||
         (this->ha_connected_ && this->entity_id_changed_)) {
-        ESP_LOGD(TAG, "Requesting update schedule from Home Assistant...");
+        ESP_LOGD(TAG, "Requesting update from Home Assistant");
         if (this->entity_id_changed_) {
             // Invalidate old schedule since it's for a different entity
             this->schedule_valid_ = false;
@@ -152,18 +157,30 @@ void Schedule::setup() {
 }
 
 void Schedule::dump_config_base() {
-    ESP_LOGCONFIG(TAG, "Schedule (Base) Configuration:");
-    ESP_LOGCONFIG(TAG, "Schedule Entity ID: %s", ha_schedule_entity_id_.c_str());
-    ESP_LOGCONFIG(TAG, "Max number of entries the schedule can hold: %d", schedule_max_entries_);
-    ESP_LOGCONFIG(TAG, "Schedule Max size in bytes: %d", schedule_max_size_);
-    ESP_LOGCONFIG(TAG, "Object ID: %s", this->get_object_id().c_str());
-    ESP_LOGCONFIG(TAG, "Preference Hash: %u", this->get_preference_hash());
-    ESP_LOGCONFIG(TAG, "Object Hash ID: %u", this->get_object_id_hash());
-    ESP_LOGCONFIG(TAG, "name: %s", this->name_.c_str());
-    ESP_LOGCONFIG(TAG, "Home Assistant connected: %s", this->ha_connected_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "RTC Time valid: %s", this->rtc_time_valid_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "Schedule valid: %s", this->schedule_valid_ ? "Yes" : "No");
-    ESP_LOGCONFIG(TAG, "Schedule empty: %s", this->schedule_empty_ ? "Yes" : "No");
+    ESP_LOGCONFIG(TAG,
+                  "Configuration:\n"
+                  "  Entity ID: %s\n"
+                  "  Max Entries: %d\n"
+                  "  Max Size: %d bytes\n"
+                  "  Object ID: %s\n"
+                  "  Preference Hash: %u\n"
+                  "  Object Hash ID: %u\n"
+                  "  Name: %s\n"
+                  "  HA Connected: %s\n"
+                  "  RTC Valid: %s\n"
+                  "  Valid: %s\n"
+                  "  Empty: %s",
+                  ha_schedule_entity_id_.c_str(),
+                  schedule_max_entries_,
+                  schedule_max_size_,
+                  this->get_object_id().c_str(),
+                  this->get_preference_hash(),
+                  this->get_object_id_hash(),
+                  this->name_.c_str(),
+                  this->ha_connected_ ? "Yes" : "No",
+                  this->rtc_time_valid_ ? "Yes" : "No",
+                  this->schedule_valid_ ? "Yes" : "No",
+                  this->schedule_empty_ ? "Yes" : "No");
     ESP_LOGCONFIG(TAG, "Registered Data Sensors:");
     for (auto *sensor : this->data_sensors_) {
         sensor->dump_config();
@@ -235,12 +252,12 @@ void Schedule::check_rtc_time_valid_() {
         if (!now.is_valid()) {
             if (this->rtc_time_valid_) {
                 // Time was valid but now is not (shouldn't normally happen)
-                ESP_LOGW(TAG, "Device time is no longer valid!");
+                ESP_LOGW(TAG, "Device time is no longer valid");
                 this->rtc_time_valid_ = false;
             }
             // Only log on first check during setup
             else if (this->last_time_check_ == 0) {
-                ESP_LOGW(TAG, "Device time is not yet synchronized. Schedule functions will not work until time is valid.");
+                ESP_LOGW(TAG, "Device time not synchronized, schedule paused");
             }
         } else {
             if (!this->rtc_time_valid_) {
@@ -296,7 +313,7 @@ void Schedule::log_state_flags_() {
 //==============================================================================
 
 void Schedule::initialize_schedule_operation_() {
-    ESP_LOGI(TAG, "Initializing schedule operation...");
+    ESP_LOGI(TAG, "Initializing operation");
     
     if (this->time_ == nullptr) {
         ESP_LOGW(TAG, "Cannot initialize schedule operation: no time component");
@@ -571,7 +588,7 @@ void Schedule::create_schedule_preference() {
         return;
     }
     sched_array_pref_->create_preference(this->get_object_id_hash());
-    ESP_LOGV(TAG, "Schedule preference created successfully.");
+    ESP_LOGV(TAG, "Preference created successfully");
 }
 
 void Schedule::load_schedule_from_pref_() {
@@ -712,7 +729,7 @@ void Schedule::setup_schedule_retrieval_service_() {
             ha_connected_ = false;
         return;
         }
-        ESP_LOGI(TAG, "Setting up schedule.get_schedule service for %s...", ha_schedule_entity_id_.c_str());
+        ESP_LOGI(TAG, "Setting up get_schedule service for %s", ha_schedule_entity_id_.c_str());
         // Get the global API server instance (required for communication)
         api::APIServer *api_server = api::global_api_server;
 
@@ -792,7 +809,7 @@ void Schedule::setup_notification_service_() {
             return;
         }
         
-        ESP_LOGD(TAG, "Setting up Home Assistant notification service...");
+        ESP_LOGD(TAG, "Setting up HA notification service");
         
         // Get the global API server instance
         api::APIServer *api_server = api::global_api_server;
@@ -849,7 +866,7 @@ void Schedule::request_schedule() {
 
 void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     std::vector<uint16_t> work_buffer_;
-    ESP_LOGI(TAG, "Processing received schedule data into integer array for %s...", this->ha_schedule_entity_id_.c_str());
+    ESP_LOGI(TAG, "Processing data for %s", this->ha_schedule_entity_id_.c_str());
     
     // Mark schedule as invalid at start of processing
     this->schedule_valid_ = false;
@@ -877,8 +894,7 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
     
     for (int i = 0; i < 7; ++i) {
         if (!schedule[days[i]].is<JsonArrayConst>()) {
-            ESP_LOGE(TAG, "Day '%s' not found in schedule; aborting schedule processing.", days[i]);
-            ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+            ESP_LOGE(TAG, "Day '%s' not found; aborting", days[i]);
             std::string msg = "Schedule parsing failed: Day '" + std::string(days[i]) + "' not found. Schedule data is corrupted or incomplete.";
             this->send_ha_notification_(msg, "Schedule Error");
             return;
@@ -888,20 +904,17 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
         for (JsonObjectConst entry : day_array) {
             // Validate entry has "from" and "to" fields
             if (!entry["from"].is<const char*>() || !entry["to"].is<const char*>()) {
-                ESP_LOGE(TAG, "Invalid or missing 'from'/'to' fields in %s; aborting schedule processing.", days[i]);
-                ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+                ESP_LOGE(TAG, "Invalid or missing 'from'/'to' fields in %s; aborting", days[i]);
                 std::string msg = "Schedule parsing failed: Invalid or missing 'from'/'to' fields in " + std::string(days[i]) + ". Please verify the schedule configuration.";
                 this->send_ha_notification_(msg, "Schedule Error");
                 return;
             }
             
             if (!(this->isValidTime_(entry["from"]) && this->isValidTime_(entry["to"]))) {
-                ESP_LOGE(TAG, "Invalid time range in %s: from='%s', to='%s'; aborting schedule processing.",
+                ESP_LOGE(TAG, "Invalid time range in %s: from='%s', to='%s'; aborting",
                         days[i],
                         entry["from"].as<const char*>(),
                         entry["to"].as<const char*>());
-
-                ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
                 std::string msg = "Schedule parsing failed: Invalid time range in " + std::string(days[i]) + 
                                   " (from='" + std::string(entry["from"].as<const char*>()) + 
                                   "', to='" + std::string(entry["to"].as<const char*>()) + "'). Please verify the schedule configuration.";
@@ -916,8 +929,7 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
             
             // Check if entry has "data" field
             if (!entry["data"].is<JsonObjectConst>()) {
-                ESP_LOGE(TAG, "Missing 'data' field in %s entry; aborting schedule processing.", days[i]);
-                ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
+                ESP_LOGE(TAG, "Missing 'data' field in %s entry; aborting", days[i]);
                 return;
             }
             
@@ -930,12 +942,8 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                 
                 // Check if the data field exists
                 if (!data[label.c_str()].is<JsonVariantConst>()) {
-                    ESP_LOGE(TAG, "Missing data field '%s' in %s entry; aborting schedule processing.", 
+                    ESP_LOGE(TAG, "Missing data field '%s' in %s entry; aborting", 
                              label.c_str(), days[i]);
-                    ESP_LOGE(TAG, "Schedule data is corrupted or incomplete. Please verify the schedule configuration.");
-                    std::string msg = "Schedule parsing failed: Missing data field '" + label + "' in " + 
-                                      std::string(days[i]) + " entry. Please verify the schedule configuration.";
-                    this->send_ha_notification_(msg, "Schedule Error");
                     return;
                 }
                 
@@ -950,7 +958,7 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                     case 1:  // uint16_t
                     case 2: {  // int32_t
                         if (!data_value.is<int>() && !data_value.is<long>()) {
-                            ESP_LOGE(TAG, "Data field '%s' in %s is not an integer type; aborting schedule processing.", 
+                            ESP_LOGE(TAG, "Data field '%s' in %s not integer type; aborting", 
                                      label.c_str(), days[i]);
                             ESP_LOGE(TAG, "Expected integer for sensor '%s' with item_type %u", label.c_str(), item_type);
                             std::string msg = "Schedule parsing failed: Data field '" + label + "' in " + 
@@ -964,7 +972,7 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                     }
                     case 3: {  // float
                         if (!data_value.is<float>() && !data_value.is<double>() && !data_value.is<int>()) {
-                            ESP_LOGE(TAG, "Data field '%s' in %s is not a numeric type; aborting schedule processing.", 
+                            ESP_LOGE(TAG, "Data field '%s' in %s not numeric type; aborting", 
                                      label.c_str(), days[i]);
                             ESP_LOGE(TAG, "Expected numeric for sensor '%s' with item_type %u", label.c_str(), item_type);
                             std::string msg = "Schedule parsing failed: Data field '" + label + "' in " + 
@@ -1043,17 +1051,28 @@ void Schedule::process_schedule_(const ArduinoJson::JsonObjectConst &response) {
                  sensor->get_label().c_str(), static_cast<unsigned>(data_work_buffers[sensor_idx].size()));
     }
 
-    ESP_LOGI(TAG, "Schedule processing complete.");
+    ESP_LOGI(TAG, "Processing complete");
     // Persist the new schedule to flash    
     save_schedule_to_pref_();
     // Mark schedule as valid after successful processing
     this->schedule_valid_ = true;
+    
     // Set schedule_empty based on whether we found any schedule entries
     this->schedule_empty_ = is_empty;
     
     if (is_empty) {
-        ESP_LOGI(TAG, "Schedule is empty (no time entries found).");
+        ESP_LOGI(TAG, "Empty (no time entries found)");
     }
+    
+    // Always notify derived class on schedule update to ensure mode select is updated
+    // (not just when empty state changes, to handle edge cases)
+    this->on_schedule_empty_changed(is_empty);
+    
+    // IMPORTANT: Force reinitialization to find new current/next events
+    // The loop() will detect INIT state and call initialize_schedule_operation_()
+    ESP_LOGI(TAG, "Forcing schedule reinitialization to update current/next events");
+    this->force_reinitialize();
+    
     log_state_flags_();
 }
 

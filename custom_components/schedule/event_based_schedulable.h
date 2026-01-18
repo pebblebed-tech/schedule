@@ -197,6 +197,16 @@ class EventBasedSchedulable : public Schedule {
   /** Update event-based UI (sensors and displays) */
   void update_event_based_ui_();
   
+  /** Force reinitialization after schedule update */
+  void force_reinitialize() {
+    ESP_LOGD("schedule.event_based", "Forcing reinitialization");
+    this->current_state_ = STATE_EVENT_INIT;
+    this->needs_initial_ui_update_ = true;
+  }
+  
+  /** Update mode select options when schedule empty state changes */
+  void on_schedule_empty_changed(bool is_empty) override;
+  
  private:
   //============================================================================
   // EVENT-BASED MEMBER VARIABLES

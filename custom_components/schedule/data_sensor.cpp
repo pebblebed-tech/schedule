@@ -40,13 +40,21 @@ void DataSensor::setup() {
 void DataSensor::dump_config() {
   size_t array_size = this->array_pref_ ? this->array_pref_->size() : 0;
   
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "DataSensor '%s':", this->get_object_id().c_str());
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Label: '%s'", this->get_label().c_str());
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Item Type: %u", this->item_type_);
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Max Schedule Entries: %u", static_cast<unsigned>(this->max_schedule_data_entries_));
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Data Vector Size: %u bytes", static_cast<unsigned>(this->data_vector_.size()));
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Array Pref Size: %u bytes", static_cast<unsigned>(array_size));
-  ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Off Behavior: %s", this->get_off_behavior_string());
+  ESP_LOGCONFIG(TAG_DATA_SENSOR,
+                "'%s':\n"
+                "  Label: '%s'\n"
+                "  Item Type: %u\n"
+                "  Max Entries: %u\n"
+                "  Data Size: %u bytes\n"
+                "  Array Size: %u bytes\n"
+                "  Off Behavior: %s",
+                this->get_object_id().c_str(),
+                this->get_label().c_str(),
+                this->item_type_,
+                static_cast<unsigned>(this->max_schedule_data_entries_),
+                static_cast<unsigned>(this->data_vector_.size()),
+                static_cast<unsigned>(array_size),
+                this->get_off_behavior_string());
   if (this->off_behavior_ == DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE) {
     ESP_LOGCONFIG(TAG_DATA_SENSOR, "  Off Value: %.2f", this->off_value_);
   }
@@ -149,10 +157,24 @@ void DataSensor::apply_state(int16_t event_index, bool switch_state, bool manual
   
   // Handle auto ON state
   if (switch_state) {
-    
     ESP_LOGV(TAG_DATA_SENSOR, "Sensor '%s': Setting value for ON state at index %d", 
              this->get_name().c_str(), event_index);
-    uint16_t data_index = event_index / 2;
+    
+    // Calculate data index based on parent schedule's storage type
+    // State-based: event_index / 2 (each entry has ON+OFF pair)
+    // Event-based: event_index / 1 (each entry has EVENT only)
+    uint16_t data_index;
+    if (this->parent_schedule_ != nullptr) {
+      size_t multiplier = this->parent_schedule_->get_storage_multiplier();
+      data_index = event_index / multiplier;
+    } else {
+      // Fallback: assume state-based (2) for backward compatibility
+      data_index = event_index / 2;
+    }
+    
+    ESP_LOGV(TAG_DATA_SENSOR, "Sensor '%s': event_index=%d, data_index=%d", 
+             this->get_name().c_str(), event_index, data_index);
+    
     this->get_and_publish_sensor_value(data_index);
     this->set_last_on_value(this->state);
   } 

@@ -29,6 +29,13 @@ The Schedule component provides time-based automation for ESPHome devices integr
 - **Flexibility**: Data sensors support schedule variables (temperature, position, etc.)
 
 ---
+## High Level Architecture
+
+![Architecture Diagram](arch.png)
+
+---
+## Class Diagram
+![Class Diagram](class.png)
 
 ## Class Hierarchy
 
@@ -155,53 +162,7 @@ Manages schedule variables (temperature, position, etc.).
 
 ## Component Interactions
 
-```mermaid
-sequenceDiagram
-    participant HA as Home Assistant
-    participant API as ESPHome API
-    participant Sched as Schedule
-    participant Mode as ModeSelect
-    participant Data as DataSensor
-    participant Pref as Preferences
-    participant Platform as Platform Component
-    
-    Note over Sched: Setup Phase
-    Sched->>Pref: Load schedule from NVS
-    Sched->>Pref: Load entity ID hash
-    Sched->>Data: Setup data sensors
-    Data->>Pref: Load data from NVS
-    Sched->>API: Setup HA service call
-    
-    alt Schedule invalid or entity changed
-        Sched->>API: Request schedule
-        API->>HA: schedule.get_schedule
-        HA-->>API: Schedule JSON
-        API-->>Sched: Process schedule
-        Sched->>Sched: Parse and validate
-        Sched->>Pref: Save to NVS
-        Sched->>Data: Update data sensors
-        Data->>Pref: Save data to NVS
-    end
-    
-    Note over Sched: Runtime Loop
-    loop Every loop()
-        Sched->>Sched: Check prerequisites
-        Sched->>Sched: Check time validity
-        Sched->>Sched: Check HA connection
-        Sched->>Sched: Advance events if needed
-        
-        alt State changed
-            Sched->>Data: Update data sensors
-            Sched->>Platform: apply_scheduled_state(on)
-            Platform->>Platform: Apply platform logic
-        end
-    end
-    
-    Note over Mode: User Mode Change
-    Mode->>Sched: on_mode_changed("Auto")
-    Sched->>Sched: Update state machine
-    Sched->>Platform: apply_scheduled_state(on)
-```
+![Component Interactions Diagram](component-interactions.png)
 
 ### Interaction Flow
 
@@ -369,38 +330,38 @@ stateDiagram-v2
 ### NVS Memory Layout
 
 ```
-┌─────────────────────────────────────────────┐
+┌──────────────────────────────────────────────┐
 │         Schedule Preference                  │
 │  Key: hash(object_id)                        │
-│  Size: (entries × multiplier × 2) + 4 bytes │
+│  Size: (entries × multiplier × 2) + 4 bytes  │
 │                                              │
-│  State-based: [ON, OFF, ON, OFF, ..., TERM] │
-│  Event-based: [EVT, EVT, EVT, ..., TERM]    │
-└─────────────────────────────────────────────┘
+│  State-based: [ON, OFF, ON, OFF, ..., TERM]  │
+│  Event-based: [EVT, EVT, EVT, ..., TERM]     │
+└──────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────┐
-│         Data Sensor Preference (per sensor) │
-│  Key: hash(sensor_object_id)                │
-│  Size: entries × type_size bytes            │
+┌──────────────────────────────────────────────┐
+│         Data Sensor Preference (per sensor)  │
+│  Key: hash(sensor_object_id)                 │
+│  Size: entries × type_size bytes             │
 │                                              │
-│  [value1, value2, value3, ...]              │
-└─────────────────────────────────────────────┘
+│  [value1, value2, value3, ...]               │
+└──────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────┐
+┌──────────────────────────────────────────────┐
 │         Entity ID Hash                       │
-│  Key: hash("entity_id") ^ hash(object_id)  │
-│  Size: 4 bytes                              │
+│  Key: hash("entity_id") ^ hash(object_id)    │
+│  Size: 4 bytes                               │
 │                                              │
-│  Used to detect schedule entity changes     │
-└─────────────────────────────────────────────┘
+│  Used to detect schedule entity changes      │
+└──────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────┐
+┌──────────────────────────────────────────────┐
 │         Mode Select Index                    │
-│  Key: hash(mode_select_object_id)          │
-│  Size: 1 byte                               │
+│  Key: hash(mode_select_object_id)            │
+│  Size: 1 byte                                │
 │                                              │
-│  Stores selected mode index                 │
-└─────────────────────────────────────────────┘
+│  Stores selected mode index                  │
+└──────────────────────────────────────────────┘
 ```
 
 ### Storage Size Examples
@@ -509,6 +470,64 @@ The component sends Home Assistant notifications for:
    - Schedule exceeds max size (with truncation warning)
 
 ---
+
+## Dynamic Mode Selection
+
+The mode select components automatically adapt their available options based on the schedule state to prevent user confusion and errors.
+
+### State-Based Mode Behavior
+
+**When Schedule is Empty:**
+- Available modes: "Manual Off", "Manual On" only
+- Hidden modes: "Auto", "Early Off", "Boost On"
+- Rationale: Schedule-dependent modes require valid schedule data to function
+
+**When Schedule is Populated:**
+- All 5 modes available: "Manual Off", "Early Off", "Auto", "Manual On", "Boost On"
+
+**Auto-Switching:**
+- If current mode is "Auto" when schedule becomes empty  switches to "Manual Off"
+- If current mode is "Early Off" or "Boost On" when schedule becomes empty  switches to "Manual Off"
+
+**Implementation:**
+- `ScheduleStateModeSelect::set_manual_only_mode(bool is_empty)`
+- Called from `StateBasedSchedulable::on_schedule_empty_changed()`
+- Uses `SelectTraits::set_options()` to update available options
+- Calls `publish_state()` to notify Home Assistant
+
+### Event-Based Mode Behavior
+
+**When Schedule is Empty:**
+- Available modes: "Disabled" only
+- Hidden modes: "Enabled"
+- Rationale: Cannot trigger events without schedule data
+
+**When Schedule is Populated:**
+- Both modes available: "Disabled", "Enabled"
+
+**Auto-Switching:**
+- If current mode is "Enabled" when schedule becomes empty  switches to "Disabled"
+
+**Implementation:**
+- `ScheduleEventModeSelect::set_disabled_only_mode(bool is_empty)`
+- Called from `EventBasedSchedulable::on_schedule_empty_changed()`
+- Uses `SelectTraits::set_options()` to update available options
+- Calls `publish_state()` to notify Home Assistant
+
+### Home Assistant UI Behavior
+
+**Known Limitation:**
+- Home Assistant caches select entity options
+- UI may not immediately reflect option changes until:
+  - Browser page refresh
+  - ESPHome device reconnection
+  - Home Assistant restart
+
+**Why This Happens:**
+- HA queries entity traits on entity discovery/reconnection
+- Dynamic trait changes between connections may not trigger immediate UI update
+- `publish_state()` notifies HA of state change, but not necessarily trait changes
+
 
 ## Design Decisions
 
@@ -638,8 +657,6 @@ To add new behaviors, extend enum and add cases in `DataSensor::apply_*_behavior
 
 ### Potential Additions
 - [ ] Schedule editing from ESPHome (not just sync from HA)
-- [ ] Multiple schedules per component
-- [ ] Schedule interpolation (gradual changes)
 - [ ] Conditional schedules (if-then logic)
 - [ ] Schedule override times (vacation mode)
 - [ ] Weekly/monthly patterns
@@ -662,3 +679,4 @@ To add new behaviors, extend enum and add cases in `DataSensor::apply_*_behavior
 
 **Last Updated:** January 2026  
 **Repository:** [pebblebed-tech/schedule](https://github.com/pebblebed-tech/schedule)
+

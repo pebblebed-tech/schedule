@@ -176,6 +176,16 @@ class StateBasedSchedulable : public Schedule {
   bool should_reset_to_auto_(int state, bool event_on);
   int get_state_after_mode_reset_(bool event_on);
   
+  /** Force reinitialization after schedule update */
+  void force_reinitialize() {
+    ESP_LOGD("schedule.state_based", "Forcing reinitialization");
+    this->current_state_ = STATE_INIT;
+    this->processed_state_ = STATE_INIT;
+  }
+  
+  /** Update mode select options when schedule empty state changes */
+  void on_schedule_empty_changed(bool is_empty) override;
+  
   //============================================================================
   // STATE-SPECIFIC MEMBER VARIABLES
   //============================================================================

@@ -22,6 +22,21 @@
 #include "array_preference.h"
 #include "data_sensor.h"
 
+// Macro to safely get data sensor value from schedule by label
+// Usage: float temp = SCHEDULE_GET_DATA(testschedule, "temp");
+// Returns NAN if sensor not found, logs warning
+#define SCHEDULE_GET_DATA(schedule_id, label) \
+  ({ \
+    float _result = NAN; \
+    auto *_sensor = id(schedule_id).get_data_sensor(label); \
+    if (_sensor != nullptr) { \
+      _result = _sensor->state; \
+    } else { \
+      ESP_LOGW("schedule", "Data sensor with label '%s' not found in schedule '%s'", label, #schedule_id); \
+    } \
+    _result; \
+  })
+
 namespace esphome {
 
 // Forward declarations for API types
@@ -209,7 +224,7 @@ class Schedule : public Component  {
   void save_schedule_to_pref_();
   void sched_add_pref(ArrayPreferenceBase *array_pref);
   void request_pref_hash() {
-    ESP_LOGI("*****************", "Preference Hash: %u", this->get_preference_hash());
+    ESP_LOGI("schedule", "Preference Hash: %u", this->get_preference_hash());
   }
   
   //============================================================================
@@ -224,6 +239,26 @@ class Schedule : public Component  {
   void register_data_sensor(DataSensor *sensor) {
     this->data_sensors_.push_back(sensor);
   }
+  
+  // Get data sensor by label
+  DataSensor* get_data_sensor(const std::string &label) {
+    for (auto *sensor : this->data_sensors_) {
+      if (sensor->get_label() == label) {
+        return sensor;
+      }
+    }
+    return nullptr;
+  }
+  
+  /** Force reinitialization after schedule update 
+   * Virtual method - derived classes implement their own state reset logic
+   */
+  virtual void force_reinitialize() = 0;
+  
+  /** Handle schedule empty state change - update mode select options accordingly
+   * Virtual method - state-based schedulable overrides to update mode options
+   */
+  virtual void on_schedule_empty_changed(bool is_empty) {}
 
   //============================================================================
   // TEST AND DEBUG METHODS

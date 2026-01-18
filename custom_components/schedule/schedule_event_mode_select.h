@@ -43,6 +43,38 @@ class ScheduleEventModeSelect : public select::Select, public Component {
     }
   }
   
+  // Set disabled-only mode (schedule is empty)
+  void set_disabled_only_mode(bool disabled_only) {
+    if (disabled_only) {
+      // Only allow disabled mode
+      this->traits.set_options({"Disabled"});
+    } else {
+      // Allow both modes
+      this->traits.set_options({"Disabled", "Enabled"});
+    }
+    
+    // If current mode is not in new options, switch to Disabled
+    const auto &options = this->traits.get_options();
+    std::string current = this->current_option();
+    bool found = false;
+    for (const auto &opt : options) {
+      if (opt == current) {
+        found = true;
+        break;
+      }
+    }
+    
+    if (!found) {
+      this->publish_state("Disabled");
+      if (this->on_value_callback_) {
+        this->on_value_callback_("Disabled");
+      }
+    } else {
+      // Re-publish current state to notify HA of trait changes
+      this->publish_state(current);
+    }
+  }
+  
  protected:
   void control(const std::string &value) override {
     // Save the selected option index

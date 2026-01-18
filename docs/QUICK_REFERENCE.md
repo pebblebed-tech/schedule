@@ -1,5 +1,26 @@
 # Quick Reference Guide
 
+## Requirements
+
+### Hardware
+- **RTC Module Required**: DS1307, DS3231, or compatible I2C RTC
+- Enables schedule operation during WiFi/HA outages
+- Maintains accurate time across reboots
+
+### Time Configuration
+```yaml
+time:
+  - platform: ds1307
+    id: rtc_time
+    update_interval: never  # Sync handled by HA time
+  - platform: homeassistant
+    on_time_sync:
+      then:
+        ds1307.write_time:  # Update RTC when HA time syncs
+```
+
+---
+
 ## YAML Configuration Examples
 
 ### Switch Platform (State-Based)
@@ -166,10 +187,24 @@ select.set:
 ```
 
 ### Access Data Sensor Values
+
+**Recommended - Using Macro:**
 ```yaml
 lambda: |-
-  return id(heating_temp).state;
+  float temp = SCHEDULE_GET_DATA(heating_schedule, "temperature");
+  if (!isnan(temp)) {
+    ESP_LOGI("heating", "Target: %.1fÂC", temp);
+  }
 ```
+
+**Alternative - Direct Access:**
+```yaml
+lambda: |-
+  return SCHEDULE_GET_DATA(heating_schedule, "temperature");
+```
+
+> **Note:** The macro handles null pointer checking and logs warnings if the sensor doesn't exist.
+
 
 ## Home Assistant Schedule Format
 
@@ -253,3 +288,6 @@ schedule.heating:
 For detailed development information, see [ADDING_NEW_PLATFORMS.md](ADDING_NEW_PLATFORMS.md)
 
 For architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md)
+
+
+

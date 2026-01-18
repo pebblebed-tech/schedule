@@ -43,25 +43,7 @@ STORAGE_TYPES = {
 }
 
 def calculate_schedule_array_size(max_entries, storage_type="state"):
-    """
-    Calculate array preference size based on storage type.
-    
-    Args:
-        max_entries: Maximum number of schedule entries
-        storage_type: 'state' for state-based (default), 'event' for event-based
-    
-    Returns:
-        Size in bytes for ArrayPreference template
-    
-    Storage formats:
-        state: [ON_TIME, OFF_TIME] pairs = 2 uint16_t per entry = 4 bytes
-               + terminator [0xFFFF, 0xFFFF] = 4 bytes
-               Total = (entries * 4) + 4
-        
-        event: [EVENT_TIME] singles = 1 uint16_t per entry = 2 bytes
-               + terminator [0xFFFF] = 2 bytes
-               Total = (entries * 2) + 2  (50% savings!)
-    """
+# Calculate array preference size based on storage type.
     if storage_type == 'state' or storage_type == 'state_based':
         # State-based: [ON, OFF] pairs + [0xFFFF, 0xFFFF] terminator
         multiplier = 2
@@ -106,8 +88,15 @@ MANUAL_BEHAVIORS = {
     "MANUAL_VALUE": 2,
 }
 
+def validate_off_value(config):
+    # Validate that off_value is present when off_behavior is OFF_VALUE.
+    if config.get(CONF_OFF_BEHAVIOR) == "OFF_VALUE":
+        if CONF_OFF_VALUE not in config:
+            raise cv.Invalid(f"{CONF_OFF_VALUE} is required when {CONF_OFF_BEHAVIOR} is OFF_VALUE")
+    return config
+
 def validate_manual_value(config):
-    """Validate that manual_value is present when manual_behavior is MANUAL_VALUE."""
+    # Validate that manual_value is present when manual_behavior is MANUAL_VALUE.
     if config.get(CONF_MANUAL_BEHAVIOR) == "MANUAL_VALUE":
         if CONF_MANUAL_VALUE not in config:
             raise cv.Invalid(f"{CONF_MANUAL_VALUE} is required when {CONF_MANUAL_BEHAVIOR} is MANUAL_VALUE")
@@ -130,12 +119,16 @@ _DATA_SENSOR_BASE_SCHEMA = cv.Schema({
 
 # Schema for data sensors in STATE-BASED schedules (switch, climate, etc.)
 # Includes OFF and MANUAL behavior options since these schedules have continuous state
-DATA_SENSOR_SCHEMA = _DATA_SENSOR_BASE_SCHEMA.extend({
-    cv.Optional(CONF_OFF_BEHAVIOR, default="NAN"): cv.enum(OFF_BEHAVIORS, upper=True, space="_"),
-    cv.Optional(CONF_OFF_VALUE, default=0.0): cv.float_,
-    cv.Optional(CONF_MANUAL_BEHAVIOR, default="NAN"): cv.enum(MANUAL_BEHAVIORS, upper=True, space="_"),
-    cv.Optional(CONF_MANUAL_VALUE): cv.float_,
-}).add_extra(validate_manual_value)
+DATA_SENSOR_SCHEMA_STATE_BASED = cv.All(
+    _DATA_SENSOR_BASE_SCHEMA.extend({
+        cv.Optional(CONF_OFF_BEHAVIOR, default="NAN"): cv.enum(OFF_BEHAVIORS, upper=True, space="_"),
+        cv.Optional(CONF_OFF_VALUE): cv.float_,
+        cv.Optional(CONF_MANUAL_BEHAVIOR, default="NAN"): cv.enum(MANUAL_BEHAVIORS, upper=True, space="_"),
+        cv.Optional(CONF_MANUAL_VALUE): cv.float_,
+    }),
+    validate_off_value,
+    validate_manual_value,
+)
 
 # Schema for data sensors in EVENT-BASED schedules (button, etc.)
 # Excludes OFF and MANUAL behavior options since event-based schedules don't have continuous state

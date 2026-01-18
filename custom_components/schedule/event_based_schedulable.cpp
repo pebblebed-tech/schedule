@@ -1,4 +1,5 @@
 #include "event_based_schedulable.h"
+#include "schedule_event_mode_select.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -9,6 +10,17 @@ static const char *const TAG = "schedule.event_based";
 //==============================================================================
 // VIRTUAL METHOD OVERRIDES FROM BASE CLASS
 //==============================================================================
+
+void EventBasedSchedulable::on_schedule_empty_changed(bool is_empty) {
+  if (this->mode_select_ != nullptr) {
+    this->mode_select_->set_disabled_only_mode(is_empty);
+    if (is_empty) {
+      ESP_LOGI(TAG, "Schedule empty - restricting to disabled mode only");
+    } else {
+      ESP_LOGI(TAG, "Schedule populated - both modes available");
+    }
+  }
+}
 
 void EventBasedSchedulable::advance_to_next_event_() {
   // Call base class implementation to handle common event advancement

@@ -154,14 +154,15 @@ switch:
         label: "temp"
         item_type: float
         name: "Schedule Temperature"
-        item_behavior_when_off: LAST_ON_VALUE
+        item_behavior_when_off: OFF_VALUE
         item_off_value: 21.5
         item_behavior_in_manual_on: MANUAL_VALUE
         item_manual_on_value: 22.0
     on_turn_on:
-      - logger.log: "Test Schedule Switch Turned ON"
-    on_turn_off:
-      - logger.log: "Test Schedule Switch Turned OFF"
+      - lambda: |-
+          float temp = SCHEDULE_GET_DATA(testschedule, "temp");
+          ESP_LOGI("schedule", "Switch ON - Temperature: %.1f°C", temp);
+
   - platform: schedule
     id: testschedule2
     name: "Test Schedule Switch2"
@@ -369,6 +370,7 @@ button:
 
 
   - platform: schedule
+    id: fish_feeding_button
     name: "Feed Fish Button"
     ha_schedule_entity_id: "schedule.fish_feeding"
     max_schedule_size: 10
@@ -390,6 +392,11 @@ button:
       - label: "Feed Amount"
         item_type: uint8_t  # 0-255
         name: "Feed Amount Sensor" 
+    
+    on_press:
+      - lambda: |-
+          float amount = SCHEDULE_GET_DATA(fish_feeding_button, "Feed Amount");
+          ESP_LOGI("schedule", "Feed button pressed - Amount: %.0f", amount);
 
 
   - platform: template

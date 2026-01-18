@@ -53,32 +53,10 @@ SCHEDULE_BUTTON_MODE_OPTIONS = [
     "Enabled"
 ]
 
-def add_default_ids(config):
-    """Add default IDs for optional components based on the button ID."""
-    button_id = config[CONF_ID]
-    base_id = button_id.id
-    
-    # Auto-generate current event sensor ID if not provided
-    if CONF_CURRENT_EVENT in config and CONF_ID not in config[CONF_CURRENT_EVENT]:
-        config[CONF_CURRENT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_current_event_sensor")
-    
-    # Auto-generate next event sensor ID if not provided
-    if CONF_NEXT_EVENT in config and CONF_ID not in config[CONF_NEXT_EVENT]:
-        config[CONF_NEXT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_next_event_sensor")
-    
-    # Auto-generate mode select ID if not provided
-    if CONF_MODE_SELECT in config and CONF_ID not in config[CONF_MODE_SELECT]:
-        config[CONF_MODE_SELECT][CONF_ID] = cv.declare_id(ScheduleEventModeSelect)(f"{base_id}_mode_select")
-    
-    # Update button always gets auto-generated ID
-    if CONF_ID not in config[CONF_UPDATE_BUTTON]:
-        config[CONF_UPDATE_BUTTON][CONF_ID] = cv.declare_id(UpdateScheduleButton)(f"{base_id}_update_button")
-    
-    return config
-
 CONFIG_SCHEMA = esphome_button.button_schema(
     ScheduleButton,
 ).extend({
+    cv.GenerateID(): cv.declare_id(ScheduleButton),
     cv.Required(CONF_HA_SCHEDULE_ENTITY_ID): cv.string,
     cv.Optional(CONF_MAX_SCHEDULE_SIZE, default=21): cv.int_,
     cv.Optional(CONF_SCHEDULED_DATA_ITEMS): cv.ensure_list(DATA_SENSOR_SCHEMA_EVENT_BASED),
@@ -109,9 +87,6 @@ CONFIG_SCHEMA = esphome_button.button_schema(
     ),
     cv.Optional(CONF_UPDATE_ON_RECONNECT, default=False): cv.boolean,
 }).extend(cv.COMPONENT_SCHEMA)
-
-# Apply default ID generation
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, add_default_ids)
 
 async def to_code(config):
     # Create the button (which extends EventBasedSchedulable)

@@ -10,8 +10,6 @@ from esphome.components import time
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
-    CONF_ICON,
-    CONF_ENTITY_CATEGORY,
     CONF_TIME_ID,
     ENTITY_CATEGORY_CONFIG,
 )
@@ -22,7 +20,7 @@ from .. import (
     Schedule,
     StateBasedSchedulable,
     DataSensor,
-    DATA_SENSOR_SCHEMA,
+    DATA_SENSOR_SCHEMA_STATE_BASED,
     CONF_SCHEDULED_DATA_ITEMS,
     CONF_ITEM_LABEL,
     CONF_ITEM_TYPE,
@@ -63,40 +61,14 @@ SCHEDULE_MODE_OPTIONS = [
     "Boost On"
 ]
 
-def add_default_ids(config):
-    """Add default IDs for optional components based on the switch ID."""
-    switch_id = config[CONF_ID]
-    base_id = switch_id.id
-    
-    # Auto-generate switch indicator ID if not provided
-    if CONF_SCHEDULE_SWITCH_IND in config and CONF_ID not in config[CONF_SCHEDULE_SWITCH_IND]:
-        config[CONF_SCHEDULE_SWITCH_IND][CONF_ID] = cv.declare_id(ScheduleSwitchIndicator)(f"{base_id}_indicator")
-    
-    # Auto-generate current event sensor ID if not provided
-    if CONF_CURRENT_EVENT in config and CONF_ID not in config[CONF_CURRENT_EVENT]:
-        config[CONF_CURRENT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_current_event_sensor")
-    
-    # Auto-generate next event sensor ID if not provided
-    if CONF_NEXT_EVENT in config and CONF_ID not in config[CONF_NEXT_EVENT]:
-        config[CONF_NEXT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_next_event_sensor")
-    
-    # Auto-generate mode select ID if not provided
-    if CONF_MODE_SELECT in config and CONF_ID not in config[CONF_MODE_SELECT]:
-        config[CONF_MODE_SELECT][CONF_ID] = cv.declare_id(ScheduleStateModeSelect)(f"{base_id}_mode_select")
-    
-    # Update button always gets auto-generated ID
-    if CONF_ID not in config[CONF_UPDATE_BUTTON]:
-        config[CONF_UPDATE_BUTTON][CONF_ID] = cv.declare_id(UpdateScheduleButton)(f"{base_id}_update_button")
-    
-    return config
-
 CONFIG_SCHEMA = esphome_switch.switch_schema(
     ScheduleSwitch,
     default_restore_mode="RESTORE_DEFAULT_OFF",
 ).extend({
+    cv.GenerateID(): cv.declare_id(ScheduleSwitch),
     cv.Required(CONF_HA_SCHEDULE_ENTITY_ID): cv.string,
     cv.Optional(CONF_MAX_SCHEDULE_SIZE, default=21): cv.int_,
-    cv.Optional(CONF_SCHEDULED_DATA_ITEMS): cv.ensure_list(DATA_SENSOR_SCHEMA),
+    cv.Optional(CONF_SCHEDULED_DATA_ITEMS): cv.ensure_list(DATA_SENSOR_SCHEMA_STATE_BASED),
     cv.Required(CONF_UPDATE_BUTTON): cv.maybe_simple_value(
         button.button_schema(
             UpdateScheduleButton,
@@ -130,9 +102,6 @@ CONFIG_SCHEMA = esphome_switch.switch_schema(
     ),
     cv.Optional(CONF_UPDATE_ON_RECONNECT, default=False): cv.boolean,
 }).extend(cv.COMPONENT_SCHEMA)
-
-# Apply default ID generation
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, add_default_ids)
 
 async def to_code(config):
     # Create the switch (which extends Schedule)
@@ -217,17 +186,18 @@ async def to_code(config):
             cg.add(sens.set_array_preference(sensor_array_pref))
             
             # Set off behavior and off value
-            off_behavior_name = sensor_config[CONF_OFF_BEHAVIOR]
+            off_behavior_name = sensor_config.get(CONF_OFF_BEHAVIOR, "NAN")
             off_behavior_enum_map = {
                 "NAN": "DATA_SENSOR_OFF_BEHAVIOR_NAN",
                 "LAST_ON_VALUE": "DATA_SENSOR_OFF_BEHAVIOR_LAST_ON_VALUE",
                 "OFF_VALUE": "DATA_SENSOR_OFF_BEHAVIOR_OFF_VALUE",
             }
             cg.add(sens.set_off_behavior(cg.RawExpression(f'esphome::schedule::{off_behavior_enum_map[off_behavior_name]}')))
-            cg.add(sens.set_off_value(sensor_config[CONF_OFF_VALUE]))
+            if CONF_OFF_VALUE in sensor_config:
+                cg.add(sens.set_off_value(sensor_config[CONF_OFF_VALUE]))
             
             # Set manual behavior and manual value
-            manual_behavior_name = sensor_config[CONF_MANUAL_BEHAVIOR]
+            manual_behavior_name = sensor_config.get(CONF_MANUAL_BEHAVIOR, "NAN")
             manual_behavior_enum_map = {
                 "NAN": "DATA_SENSOR_MANUAL_BEHAVIOR_NAN",
                 "LAST_ON_VALUE": "DATA_SENSOR_MANUAL_BEHAVIOR_LAST_ON_VALUE",
