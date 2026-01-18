@@ -32,8 +32,8 @@ When paired with a RTC such as DS1307 this allows the device to opperate indepen
 ---
 ## Technical Description
 
-For detailed technical information about the component architecture, state machines, and internal workings, see:
-- **[Technical Architecture](docs/ARCHITECTURE.md)** - Component design and implementation details
+For detailed technical information about the how to create other schedule components, component architecture, state machines, and internal workings, see:
+- **[Technical Architecture](docs/README.md)** - Component design and implementation details
 
 ---
 
