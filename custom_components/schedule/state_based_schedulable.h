@@ -153,7 +153,7 @@ class StateBasedSchedulable : public Schedule {
   
   // Logging - state-based format (ON/OFF pairs)
   void log_schedule_data() override;
-  
+   
  protected:
   //============================================================================
   // VIRTUAL METHOD OVERRIDES FROM BASE CLASS

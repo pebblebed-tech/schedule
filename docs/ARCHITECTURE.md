@@ -31,11 +31,40 @@ The Schedule component provides time-based automation for ESPHome devices integr
 ---
 ## High Level Architecture
 
-![Architecture Diagram](arch.png)
+```mermaid
+flowchart TB
+    HA[Home Assistant<br/>Schedule Helper] -->|schedule.get_schedule| API[ESPHome API]
+    
+    API -->|JSON Response| Sched[Schedule Component]
+    
+    Sched -->|Parse & Validate| Storage[(NVS Flash Storage)]
+    Sched -->|Load on Boot| Storage
+    
+    Storage -->|Schedule Data| SM[State Machine]
+    Storage -->|Sensor Data| DS[Data Sensors]
+    
+    SM -->|State Changes| Platform[Platform Component<br/>Switch/Button/Climate/etc]
+    DS -->|Values| Platform
+    
+    Mode[Mode Select] -->|User Control| SM
+    Update[Update Button] -->|Request| API
+    
+    Platform -->|Control| Device[Physical Device]
+    
+    RTC[RTC Module<br/>DS1307/DS3231] -->|Current Time| Sched
+    
+    Sched -->|Errors| Notify[HA Notifications]
+    
+    style HA fill:#90EE90
+    style Storage fill:#FFD700
+    style Platform fill:#87CEEB
+    style Device fill:#FFA07A
+```
 
 ---
 ## Class Diagram
-![Class Diagram](class.png)
+
+See detailed class hierarchy below.
 
 ## Class Hierarchy
 
@@ -162,7 +191,53 @@ Manages schedule variables (temperature, position, etc.).
 
 ## Component Interactions
 
-![Component Interactions Diagram](component-interactions.png)
+```mermaid
+sequenceDiagram
+    participant HA as Home Assistant
+    participant API as ESPHome API
+    participant Sched as Schedule
+    participant Mode as ModeSelect
+    participant Data as DataSensor
+    participant Pref as Preferences
+    participant Platform as Platform Component
+    
+    Note over Sched: Setup Phase
+    Sched->>Pref: Load schedule from NVS
+    Sched->>Pref: Load entity ID hash
+    Sched->>Data: Setup data sensors
+    Data->>Pref: Load data from NVS
+    Sched->>API: Setup HA service call
+    
+    alt Schedule invalid or entity changed
+        Sched->>API: Request schedule
+        API->>HA: schedule.get_schedule
+        HA-->>API: Schedule JSON
+        API-->>Sched: Process schedule
+        Sched->>Sched: Parse and validate
+        Sched->>Pref: Save to NVS
+        Sched->>Data: Update data sensors
+        Data->>Pref: Save data to NVS
+    end
+    
+    Note over Sched: Runtime Loop
+    loop Every loop()
+        Sched->>Sched: Check prerequisites
+        Sched->>Sched: Check time validity
+        Sched->>Sched: Check HA connection
+        Sched->>Sched: Advance events if needed
+        
+        alt State changed
+            Sched->>Data: Update data sensors
+            Sched->>Platform: apply_scheduled_state(on)
+            Platform->>Platform: Apply platform logic
+        end
+    end
+    
+    Note over Mode: User Mode Change
+    Mode->>Sched: on_mode_changed("Auto")
+    Sched->>Sched: Update state machine
+    Sched->>Platform: apply_scheduled_state(on)
+```
 
 ### Interaction Flow
 

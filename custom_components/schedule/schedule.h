@@ -7,6 +7,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/components/api/api_server.h"
+#include "esphome/components/api/user_services.h"
 #include "esphome/components/json/json_util.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/button/button.h"

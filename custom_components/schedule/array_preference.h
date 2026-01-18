@@ -25,11 +25,6 @@ class ArrayPreference : public ArrayPreferenceBase {
 
   void create_preference(uint32_t key) override {
     pref_ = global_preferences->make_preference<uint8_t[N]>(key);
-   /*  if (pref_ == nullptr) {
-      ESP_LOGW("ArrayPreference", "Failed to create preference with key=0x%08X", key);
-    } else {
-      ESP_LOGD("ArrayPreference", "Created preference with key=0x%08X, size=%zu bytes", key, N);
-    } */
   }
 
   void load() override {

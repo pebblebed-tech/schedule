@@ -143,6 +143,11 @@ DATA_SENSOR_SCHEMA_EVENT_BASED = _DATA_SENSOR_BASE_SCHEMA.extend({
 CONFIG_SCHEMA = cv.Schema({})
 
 async def to_code(config):
+    # Add required build flags for Home Assistant service call with JSON responses
+    # cg.add_build_flag("-DUSE_API_HOMEASSISTANT_SERVICES")
+    cg.add_build_flag("-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES")
+    cg.add_build_flag("-DUSE_API_HOMEASSISTANT_ACTION_RESPONSES_JSON")
+    
     # Note: state_based_schedulable.cpp and event_based_schedulable.h contain
     # the implementations for StateBasedSchedulable and EventBasedSchedulable classes.
     # These files should be automatically compiled by ESPHome's build system.

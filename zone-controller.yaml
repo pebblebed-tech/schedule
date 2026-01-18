@@ -195,78 +195,6 @@ switch:
     pin: GPIO1
     id: relay1
     name: Relay 1
-    on_turn_on:
-        - homeassistant.action:
-            action: schedule.get_schedule
-            data:
-              entity_id: schedule.test_sche
-            capture_response: true
-            on_success:
-            - lambda: |-
-                JsonObjectConst next_hour = response["response"]["schedule.test_sche"]["monday"][0];
-              
-                ESP_LOGD("mon", "Monday: %s", std::string(next_hour["from"]).c_str());
-
-#    on_turn_on:
-#      - http_request.post:
-#          url: http://rhome:8123/api/services/schedule/get_schedule?return_response
-#          headers:
-#            Content-Type: application/json
-#            Authorization: !secret ha_token
-#          max_response_buffer_size: 2048
-#          capture_response: true
-#          json:
-#            entity_id: "schedule.lighting"
-#          on_response:
-#            then:
-#              - if:
-#                  condition:
-#                    lambda: return response->status_code == 200;
-#                  then:
-#                    - lambda: |-
-#                        ESP_LOGD("http","Got OK 200");
-#                        ESP_LOGD("RESPONSE", "response_data size [%d]", body.length());
-#                        if(!body.empty()) {
-#                          ESP_LOGD("JSON","About to parse");
-#                          //ESP_LOGD("JSON","last part of body [%d]}", body.substr(body.size() - 100).c_str());
-#                          DynamicJsonDocument doc(2048);
-#                          deserializeJson(doc, body);
-#                          JsonObject service_response_schedule_lighting = doc["service_response"]["schedule.lighting"];
-#
-#                          //for (JsonObject service_response_schedule_lighting_day : service_response["schedule.lighting"].as<JsonArray>()) {
-#                          //   ESP_LOGD("PARSE", "day: [%s]", day.c_str()); 
-#                           for (JsonPair kv : service_response_schedule_lighting) {
-#                                std::string day = kv.key().c_str(); 
-#                                ESP_LOGD("PARSE", "day: [%s]", day.c_str()); 
-#
-#                                for (JsonObject service_response_schedule_lighting_item : service_response_schedule_lighting[day].as<JsonArray>()) {
-#
-#                                    std::string service_response_schedule_lighting_item_start = service_response_schedule_lighting_item["start"];
-#                                    std::string service_response_schedule_lighting_item_end = service_response_schedule_lighting_item["end"];
-#
-#                                    std::string service_response_schedule_lighting_item_brightness = service_response_schedule_lighting_item["data"]["brightness"];
-#                                    std::string service_response_schedule_lighting_item_rgb = service_response_schedule_lighting_item["data"]["rgb"];
-#                                    ESP_LOGD("PARSE", "start: [%s] Stop: [%s] Bright: [%s] RGB: [%s]",service_response_schedule_lighting_item_start.c_str() , service_response_schedule_lighting_item_end.c_str(), service_response_schedule_lighting_item_brightness.c_str(), service_response_schedule_lighting_item_rgb.c_str()); 
-#                                  }
-#                              }
-#                            ESP_LOGD("PARSE", "day: outer for loop"); 
-#                                
-#                           // }
-#                           // JsonPair day = service_response_schedule_lighting_day
-#                            // ESP_LOGD("PARSE", "day: [%s]", day.key().c_str());
-#                            //for (JsonObject service_response_schedule_lighting_day_time : service_response_schedule_lighting_day.as<JsonArray>()){
-#                             // ESP_LOGD("PARSE", "start: [%s]", service_response_schedule_lighting_day_time["start"].as<String>());
-#                            //  ESP_LOGD("PARSE", "end: [%s]", service_response_schedule_lighting_day_time["end"].as<String>());
-#                           // }
-#                           ESP_LOGD("JSON","Finish parse");
-#                          }
-                        
-                      
-#                  else:
-#                    - logger.log:
-#                        format: "Error: Response status: %d, message %s"
-#                        args: [ 'response->status_code', 'body.c_str()' ]
-       
   - platform: gpio
     pin: GPIO2
     id: relay2
@@ -503,8 +431,4 @@ sensor:
       - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
     unit_of_measurement: "%"
     entity_category: diagnostic
-#dynamic_cron:
-#    - name: Irrigation
- #     lambda: |-
-#        ESP_LOGD("lambda", "Trigered CRON");
-#        return {true};   
+
