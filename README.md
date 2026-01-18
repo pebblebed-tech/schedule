@@ -7,11 +7,11 @@ When paired with a RTC such as DS1307 this allows the device to opperate indepen
 
 - ✅ **Home Assistant Integration** - Automatic sync with HA schedule helpers
 - ✅ **Persistent Storage** - Schedules saved to NVS flash, survive reboots
-- ✅ **Two Storage Types** - State-based (Switch) and Event-based (Button)
-- ✅ **Schedule Variables** - Temperature, position, and other data per schedule entry
+- ✅ **Two Scheduled  Types** - State-based (Switch) and Event-based (Button)
+- ✅ **Schedule Variables** - User defined addtional data such as Temperature, position, defined in Home Assitant schedule entry
 - ✅ **Multiple Modes** - Manual, Auto, Boost, Early-off modes for switches
 - ✅ **Error Notifications** - Automatic HA notifications for schedule errors
-- ✅**Dynamic Mode Options** - Mode select automatically adapts when schedule is empty
+
 
 ## Requirements
 
@@ -28,6 +28,12 @@ When paired with a RTC such as DS1307 this allows the device to opperate indepen
 - **ESPHome** 2025.11.1 or later
 - **Home Assistant** with schedule helper integration 2025.11.3 or later
 - **API connection** to Home Assistant (for schedule sync)
+
+---
+## Technical Description
+
+For detailed technical information about the component architecture, state machines, and internal workings, see:
+- **[Technical Architecture](docs/ARCHITECTURE.md)** - Component design and implementation details
 
 ---
 
