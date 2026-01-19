@@ -228,7 +228,7 @@ if (id(heating_schedule).state) {
 auto mode = id(heating_schedule_mode_select).state;
 
 // Get data sensor value using SCHEDULE_GET_DATA macro
-float temp = SCHEDULE_GET_DATA(id(heating_schedule), "temperature");
+float temp = SCHEDULE_GET_DATA(heating_schedule, "temperature");
 
 // Check if valid value
 if (!isnan(temp)) {
@@ -362,28 +362,36 @@ switch:
       - id: heating_temp
         label: "temperature"
         item_type: float
+        name: "Schedule Target Temperature"
         off_behavior: OFF_VALUE
         off_value: 15.0
         manual_behavior: MANUAL_VALUE
         manual_value: 20.0
+    
+    on_turn_on:
+      - lambda: |-
+          // Schedule switched ON - set thermostat to HEAT mode with scheduled temperature
+          auto target = SCHEDULE_GET_DATA(heating_schedule, "temperature");
+          if (!isnan(target)) {
+            auto call = id(room_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_HEAT);
+            call.set_target_temperature(target);
+            call.perform();
+            ESP_LOGI("heating", "Schedule ON - heating to %.1f°C", target);
+          }
+    
+    on_turn_off:
+      - lambda: |-
+          // Schedule switched OFF - turn off thermostat
+          auto call = id(room_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          ESP_LOGI("heating", "Schedule OFF - thermostat off");
 
 sensor:
   - platform: homeassistant
     id: current_temp
     entity_id: sensor.living_room_temperature
-    
-  - platform: template
-    id: target_temp_display
-    name: "Target Temperature"
-    lambda: 'return SCHEDULE_GET_DATA(id(heating_schedule), "temperature");'
-    unit_of_measurement: "°C"
-    accuracy_decimals: 1
-
-switch:
-  - platform: gpio
-    id: heater_relay
-    pin: GPIO5
-    internal: true
 
 climate:
   - platform: thermostat
@@ -399,20 +407,7 @@ climate:
     min_idle_time: 30s
     
     heat_action:
-      - lambda: |-
-          // Only heat if schedule is ON
-          if (id(heating_schedule).state) {
-            id(heater_relay).turn_on();
-            
-            // Apply scheduled temperature if available
-            auto target = SCHEDULE_GET_DATA(id(heating_schedule), "temperature");
-            if (!isnan(target)) {
-              id(room_thermostat).target_temperature = target;
-              ESP_LOGI("climate", "Setting target temp to %.1f°C", target);
-            }
-          } else {
-            id(heater_relay).turn_off();
-          }
+      - switch.turn_on: heater_relay
     
     idle_action:
       - switch.turn_off: heater_relay
@@ -422,20 +417,74 @@ climate:
       max_temperature: 28°C
       temperature_step: 0.5°C
 
-# Update thermostat when schedule state changes
-interval:
-  - interval: 30s
-    then:
-      - lambda: |-
-          if (!id(heating_schedule).state) {
-            // Turn off heating if schedule is OFF
-            id(heater_relay).turn_off();
-          }
+switch:
+  - platform: gpio
+    id: heater_relay
+    pin: GPIO5
+    internal: true
 ```
 
 ### Complex Example: Multi-Zone Heating
 
 ```yaml
+sensor:
+  - platform: homeassistant
+    id: living_room_temp
+    entity_id: sensor.living_room_temperature
+    
+  - platform: homeassistant
+    id: bedroom_temp
+    entity_id: sensor.bedroom_temperature
+
+climate:
+  # Zone 1: Living Room
+  - platform: thermostat
+    id: living_room_thermostat
+    name: "Living Room Thermostat"
+    sensor: living_room_temp
+    
+    default_preset: Home
+    on_boot_restore_from: default_preset
+    
+    min_heating_off_time: 300s
+    min_heating_run_time: 300s
+    min_idle_time: 30s
+    
+    heat_action:
+      - switch.turn_on: living_room_valve
+    
+    idle_action:
+      - switch.turn_off: living_room_valve
+    
+    visual:
+      min_temperature: 10°C
+      max_temperature: 28°C
+      temperature_step: 0.5°C
+
+  # Zone 2: Bedroom
+  - platform: thermostat
+    id: bedroom_thermostat
+    name: "Bedroom Thermostat"
+    sensor: bedroom_temp
+    
+    default_preset: Home
+    on_boot_restore_from: default_preset
+    
+    min_heating_off_time: 300s
+    min_heating_run_time: 300s
+    min_idle_time: 30s
+    
+    heat_action:
+      - switch.turn_on: bedroom_valve
+    
+    idle_action:
+      - switch.turn_off: bedroom_valve
+    
+    visual:
+      min_temperature: 10°C
+      max_temperature: 28°C
+      temperature_step: 0.5°C
+
 switch:
   # Zone 1: Living Room
   - platform: schedule
@@ -450,13 +499,32 @@ switch:
       name: "Living Room Mode"
     
     scheduled_data_items:
-      - id: living_room_temp
+      - id: living_room_target_temp
         label: "temperature"
         item_type: float
+        name: "Living Room Target Temperature"
         off_behavior: OFF_VALUE
         off_value: 15.0
         manual_behavior: MANUAL_VALUE
         manual_value: 21.0
+    
+    on_turn_on:
+      - lambda: |-
+          auto target = SCHEDULE_GET_DATA(living_room_schedule, "temperature");
+          if (!isnan(target)) {
+            auto call = id(living_room_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_HEAT);
+            call.set_target_temperature(target);
+            call.perform();
+            ESP_LOGI("zone", "Living room schedule ON - heating to %.1f°C", target);
+          }
+    
+    on_turn_off:
+      - lambda: |-
+          auto call = id(living_room_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          ESP_LOGI("zone", "Living room schedule OFF");
 
   # Zone 2: Bedroom
   - platform: schedule
@@ -471,51 +539,43 @@ switch:
       name: "Bedroom Mode"
     
     scheduled_data_items:
-      - id: bedroom_temp
+      - id: bedroom_target_temp
         label: "temperature"
         item_type: float
+        name: "Bedroom Target Temperature"
         off_behavior: OFF_VALUE
         off_value: 15.0
         manual_behavior: MANUAL_VALUE
         manual_value: 18.0
+    
+    on_turn_on:
+      - lambda: |-
+          auto target = SCHEDULE_GET_DATA(bedroom_schedule, "temperature");
+          if (!isnan(target)) {
+            auto call = id(bedroom_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_HEAT);
+            call.set_target_temperature(target);
+            call.perform();
+            ESP_LOGI("zone", "Bedroom schedule ON - heating to %.1f°C", target);
+          }
+    
+    on_turn_off:
+      - lambda: |-
+          auto call = id(bedroom_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          ESP_LOGI("zone", "Bedroom schedule OFF");
 
-  # Zone relays
+  # Zone valve relays
   - platform: gpio
     id: living_room_valve
     pin: GPIO5
-    name: "Living Room Valve"
+    internal: true
     
   - platform: gpio
     id: bedroom_valve
     pin: GPIO6
-    name: "Bedroom Valve"
-
-# Control valves based on schedules
-interval:
-  - interval: 30s
-    then:
-      - lambda: |-
-          // Living room control
-          if (id(living_room_schedule).state) {
-            id(living_room_valve).turn_on();
-            float target = SCHEDULE_GET_DATA(id(living_room_schedule), "temperature");
-            if (!isnan(target)) {
-              ESP_LOGI("zone", "Living room target: %.1f°C", target);
-            }
-          } else {
-            id(living_room_valve).turn_off();
-          }
-          
-          // Bedroom control
-          if (id(bedroom_schedule).state) {
-            id(bedroom_valve).turn_on();
-            float target = SCHEDULE_GET_DATA(id(bedroom_schedule), "temperature");
-            if (!isnan(target)) {
-              ESP_LOGI("zone", "Bedroom target: %.1f°C", target);
-            }
-          } else {
-            id(bedroom_valve).turn_off();
-          }
+    internal: true
 ```
 
 ---
@@ -607,7 +667,7 @@ Access schedule components in lambda expressions:
 auto mode = id(blinds_schedule_mode_select).state;
 
 // Get data sensor value using SCHEDULE_GET_DATA macro
-float position = SCHEDULE_GET_DATA(id(blinds_schedule), "position");
+float position = SCHEDULE_GET_DATA(blinds_schedule, "position");
 
 // Check if valid value
 if (!isnan(position)) {
@@ -686,7 +746,7 @@ button:
     
     on_press:
       - lambda: |-
-          float position = SCHEDULE_GET_DATA(id(blinds_schedule), "position");
+          float position = SCHEDULE_GET_DATA(blinds_schedule, "position");
           
           if (!isnan(position)) {
             ESP_LOGI("blinds", "Setting position to %.0f%%", position);
@@ -881,22 +941,26 @@ schedule:
     name: Blinds Schedule
     monday:
       - from: "07:00:00"
+        to: "07:00:01"
         data:
           position: 100.0
       - from: "20:00:00"
+        to: "20:00:01"
         data:
           position: 0.0
     tuesday:
       - from: "07:00:00"
+        to: "07:00:01"
         data:
           position: 100.0
       - from: "20:00:00"
+        to: "20:00:01"
         data:
           position: 0.0
     # ... continue for remaining days
 ```
 
-**Note:** For event-based schedules, only the `from` time is used. The `to` field is ignored.
+**Note:** Event-based schedules require both `from` and `to` fields in Home Assistant, but only the `from` time triggers the event. Use `to` as `from` + 1 second.
 
 ### Additional Data Fields
 

@@ -76,14 +76,16 @@ class ScheduleClimate : public climate::Climate, public StateBasedSchedulable {
       // Turn ON - set to HEAT mode and target temperature from data sensor
       call.set_mode(climate::CLIMATE_MODE_HEAT);
       
-      // Get temperature from data sensor if available
+      // Get temperature from data sensor
+      float temperature = 20.0f;  // Default temperature
       for (auto *sensor : this->data_sensors_) {
         if (sensor->get_label() == "temperature") {
-          call.set_target_temperature(sensor->state);
-          ESP_LOGD("schedule.climate", "Setting target temp to %.1f°C", sensor->state);
+          temperature = sensor->state;
+          ESP_LOGD("schedule.climate", "Setting target temp to %.1f°C", temperature);
           break;
         }
       }
+      call.set_target_temperature(temperature);
     } else {
       // Turn OFF - set to OFF mode
       call.set_mode(climate::CLIMATE_MODE_OFF);
@@ -193,22 +195,19 @@ SCHEDULE_MODE_OPTIONS = [
     "Boost On"
 ]
 
-def add_default_ids(config):
-    """Add default IDs for optional components based on the climate ID."""
-    climate_id = config[CONF_ID]
-    base_id = climate_id.id
+def validate_temperature_sensor(config):
+    """Validate that at least one data sensor with label 'temperature' exists."""
+    if CONF_SCHEDULED_DATA_ITEMS not in config:
+        raise cv.Invalid("Climate schedule requires at least one data sensor with label 'temperature'")
     
-    if CONF_CURRENT_EVENT in config and CONF_ID not in config[CONF_CURRENT_EVENT]:
-        config[CONF_CURRENT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_current_event_sensor")
+    has_temperature = False
+    for sensor_config in config[CONF_SCHEDULED_DATA_ITEMS]:
+        if sensor_config[CONF_ITEM_LABEL] == "temperature":
+            has_temperature = True
+            break
     
-    if CONF_NEXT_EVENT in config and CONF_ID not in config[CONF_NEXT_EVENT]:
-        config[CONF_NEXT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_next_event_sensor")
-    
-    if CONF_ID not in config[CONF_MODE_SELECT]:
-        config[CONF_MODE_SELECT][CONF_ID] = cv.declare_id(ScheduleStateModeSelect)(f"{base_id}_mode_select")
-    
-    if CONF_ID not in config[CONF_UPDATE_BUTTON]:
-        config[CONF_UPDATE_BUTTON][CONF_ID] = cv.declare_id(UpdateScheduleButton)(f"{base_id}_update_button")
+    if not has_temperature:
+        raise cv.Invalid("Climate schedule requires at least one data sensor with label 'temperature'")
     
     return config
 
@@ -246,8 +245,8 @@ CONFIG_SCHEMA = climate.climate_schema(
     cv.Optional(CONF_UPDATE_ON_RECONNECT, default=False): cv.boolean,
 }).extend(cv.COMPONENT_SCHEMA)
 
-# Apply default ID generation
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, add_default_ids)
+# Apply temperature sensor validation
+CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, validate_temperature_sensor)
 
 async def to_code(config):
     # Create the climate component (which extends StateBasedSchedulable)
@@ -536,22 +535,19 @@ SCHEDULE_COVER_MODE_OPTIONS = [
     "Enabled"
 ]
 
-def add_default_ids(config):
-    """Add default IDs for optional components based on the cover ID."""
-    cover_id = config[CONF_ID]
-    base_id = cover_id.id
+def validate_position_sensor(config):
+    """Validate that at least one data sensor with label 'position' exists."""
+    if CONF_SCHEDULED_DATA_ITEMS not in config:
+        raise cv.Invalid("Cover schedule requires at least one data sensor with label 'position'")
     
-    if CONF_CURRENT_EVENT in config and CONF_ID not in config[CONF_CURRENT_EVENT]:
-        config[CONF_CURRENT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_current_event_sensor")
+    has_position = False
+    for sensor_config in config[CONF_SCHEDULED_DATA_ITEMS]:
+        if sensor_config[CONF_ITEM_LABEL] == "position":
+            has_position = True
+            break
     
-    if CONF_NEXT_EVENT in config and CONF_ID not in config[CONF_NEXT_EVENT]:
-        config[CONF_NEXT_EVENT][CONF_ID] = cv.declare_id(text_sensor.TextSensor)(f"{base_id}_next_event_sensor")
-    
-    if CONF_ID not in config[CONF_MODE_SELECT]:
-        config[CONF_MODE_SELECT][CONF_ID] = cv.declare_id(ScheduleEventModeSelect)(f"{base_id}_mode_select")
-    
-    if CONF_ID not in config[CONF_UPDATE_BUTTON]:
-        config[CONF_UPDATE_BUTTON][CONF_ID] = cv.declare_id(UpdateScheduleButton)(f"{base_id}_update_button")
+    if not has_position:
+        raise cv.Invalid("Cover schedule requires at least one data sensor with label 'position'")
     
     return config
 
@@ -589,8 +585,8 @@ CONFIG_SCHEMA = cover.cover_schema(
     cv.Optional(CONF_UPDATE_ON_RECONNECT, default=False): cv.boolean,
 }).extend(cv.COMPONENT_SCHEMA)
 
-# Apply default ID generation
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, add_default_ids)
+# Apply position sensor validation
+CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, validate_position_sensor)
 
 async def to_code(config):
     # Create the cover component (which extends EventBasedSchedulable)

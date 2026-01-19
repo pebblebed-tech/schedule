@@ -64,7 +64,7 @@ The actual implementation files are in the parent directory:
 ### For More Information
 
 - Start with [QUICK_REFERENCE.md](QUICK_REFERENCE.md) for YAML examples and common tasks
-- Read [ADDING_NEW_PLATFORMS.md](ADDING_NEW_PLATFORMS.md) for step-by-step platform development
+- Read [ADDING_NEW_SCHEDULED_COMPOENTS.md](ADDING_NEW_SCHEDULED_COMPONENTS.md) for step-by-step platform development
 - Check [ARCHITECTURE.md](ARCHITECTURE.md) for system design and class relationships
 
 

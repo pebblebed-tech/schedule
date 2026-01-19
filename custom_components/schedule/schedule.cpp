@@ -13,9 +13,10 @@ static const char *TAG = "schedule";
 
 
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
-//TODO: remove auto ID recreation and update docs
+
+
 // TODO: Ensure schedule_retrieval_service_ is only setup once
-// TODO: check the use of state in the examples in the docs
+
 // Test cases
 // TODO: Check multiple data sensors with different item types
 
