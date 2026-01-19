@@ -17,6 +17,8 @@ When paired with a RTC such as DS1307 this allows the device to opperate indepen
 
 ### Hardware Requirements
 
+- **ESP32 or derivatives** - This has been tested on a ESP32-S3. Storage of schedules and associated data sensors require the use of NVS, the ESP 8266 only has 96 bytes of RTC so its not suitable for this component.
+
 - **Real-Time Clock (RTC) Module** - Required for offline operation and network outages
   - Supported modules: DS3231, DS1307, or compatible I2C RTC
   - The RTC maintains accurate timekeeping when WiFi or Home Assistant is unavailable
@@ -102,7 +104,18 @@ Add time slots:
 - **[Button Platform](#button-platform)** - Event-based scheduling for buttons, covers, locks
 - **[Home Assistant Schedules](#home-assistant-schedules)** - How to configure HA schedules with additional data
 
-## Storage Comparison
+## Storage 
+
+### NVS (Non-Volatile Storage) Usage
+
+The schedule component uses ESP32's NVS flash memory to persistently store schedules. The `max_schedule_entries` setting pre-allocates NVS space for your schedules.
+
+**⚠️ Important NVS Considerations:**
+
+- **Over-provisioning Warning:** Setting `max_schedule_entries` too high (e.g., 50+ entries when you only use 10) permanently reserves NVS space that cannot be reclaimed during normal operation
+- **NVS is Limited:** ESP32 NVS partition is typically 12-20KB. Multiple schedule components with large `max_schedule_entries` can exhaust available NVS
+- **Factory Reset Recovery:** Once your device is fully developed and deployed, you can perform a factory reset to free up over-provisioned NVS space by reducing `max_schedule_entries` to actual usage levels
+- **Right-sizing:** Set `max_schedule_entries` to your actual needs + small buffer (e.g., if you use 15 entries, set to 21, not 100)
 
 ### State-Based (Switch)
 - Stores ON/OFF time pairs
@@ -136,6 +149,13 @@ switch:
     
     mode_selector:
       name: "Heating Mode"
+
+    on_turn_on:
+      - logger.log: "Heater Switch Turned ON"
+      ....
+    on_turn_off:
+      - logger.log: "Heater Switch Turned OFF" 
+      .... 
 ```
 
 ### Configuration Variables
@@ -164,6 +184,7 @@ switch:
   - Auto-generates ID: `{switch_id}_next_event`
 - **`scheduled_data_items`** (*Optional*, list): Custom data fields for schedule entries
   - See [Schedule Data Items](#schedule-data-items) below
+- All other options from [Switch Component](https://esphome.io/components/switch/) are also available (e.g., `icon`, `entity_category`, `disabled_by_default`, `on_turn_on`, `on_turn_off`, etc.).
 
 ### Schedule Data Items
 
@@ -185,10 +206,13 @@ scheduled_data_items:
 - **`id`** (**Required**, ID): Component identifier
 - **`label`** (**Required**, string): Field name in Home Assistant schedule data
 - **`item_type`** (**Required**, enum): Data type
-  - `uint8_t` - 0 to 255
-  - `uint16_t` - 0 to 65,535
-  - `int32_t` - -2,147,483,648 to 2,147,483,647
-  - `float` - Floating point number
+  - `uint8_t` - 0 to 255 (1 byte)
+  - `uint16_t` - 0 to 65,535 (2 bytes)
+  - `int32_t` - -2,147,483,648 to 2,147,483,647 (4 bytes)
+  - `float` - Floating point number (4 bytes)
+  
+  **Note:** To minimize NVS storage usage, choose the smallest data type that accommodates your values. For example, use `uint8_t` for percentages (0-100) or temperatures in a limited range, rather than `float` or `int32_t`. But the data item state returned will always be a float.
+
 - **`off_behavior`** (*Optional*, enum): Behavior when schedule is OFF. Default: `NAN`
   - `NAN` - Sensor shows NaN
   - `LAST_ON_VALUE` - Keep last ON value
@@ -249,6 +273,8 @@ id(heating_schedule_update_button).press();
 
 The `SCHEDULE_GET_DATA` macro provides a convenient way to retrieve data sensor values from a schedule component. It handles null pointer checking and logging automatically.
 
+**Important:** If you need to access data sensor values in lambdas or other code, you must specify an `id` for each datasensor in your configuration.
+
 **Usage:**
 ```cpp
 float value = SCHEDULE_GET_DATA(schedule_id, "label");
@@ -266,7 +292,8 @@ float value = SCHEDULE_GET_DATA(schedule_id, "label");
 ```cpp
 // In your YAML configuration:
 // scheduled_data_items:
-//   - label: "temperature"
+//   - id: heating_temp      # ID is REQUIRED to access the value
+//     label: "temperature"
 //     item_type: float
 
 // In lambda code:
@@ -623,6 +650,7 @@ button:
   - Auto-generates ID: `{button_id}_next_event`
 - **`scheduled_data_items`** (*Optional*, list): Custom data fields for schedule entries
   - See [Schedule Data Items](#button-schedule-data-items) below
+- All other options from [Button Component](https://esphome.io/components/button/) are also available (e.g., `icon`, `entity_category`, `disabled_by_default`, etc.).
 
 ### Button Schedule Data Items
 
@@ -686,36 +714,123 @@ id(blinds_schedule_update_button).press();
 id(blinds_schedule).press();
 ```
 
-### Simple Example: Timed Blinds Opening
+### Example: Automated Cat Feeder
+
+This example demonstrates a scheduled cat feeder that dispenses food at specific times with configurable portion sizes.
 
 ```yaml
 button:
   - platform: schedule
-    id: blinds_schedule
-    name: "Blinds Schedule"
-    ha_schedule_entity_id: "schedule.blinds"
+    id: cat_feeder_schedule
+    name: "Cat Feeder Schedule"
+    ha_schedule_entity_id: "schedule.cat_feeding"
+    max_schedule_entries: 10
     
     schedule_update_button:
-      name: "Update Blinds Schedule"
+      name: "Update Feeding Schedule"
     
     mode_selector:
-      name: "Blinds Mode"
+      name: "Feeder Mode"
+    
+    current_event_sensor:
+      name: "Current Feeding Event"
+    
+    next_event_sensor:
+      name: "Next Feeding Event"
+    
+    scheduled_data_items:
+      - id: portion_size
+        label: "portion"
+        item_type: uint8_t  # Portion size in grams (0-255)
     
     on_press:
-      - logger.log: "Opening blinds..."
-      - cover.open: living_room_blinds
+      - lambda: |-
+          // Get portion size from schedule (default to 50g if not specified)
+          float portion = SCHEDULE_GET_DATA(cat_feeder_schedule, "portion");
+          uint8_t grams = isnan(portion) ? 50 : (uint8_t)portion;
+          
+          ESP_LOGI("cat_feeder", "Dispensing %d grams of food", grams);
+          
+          // Calculate motor run time (assuming 10g per second)
+          uint32_t run_time_ms = grams * 100;
+          
+          // Run feeder motor
+          id(feeder_motor).turn_on();
+      
+      - delay: !lambda |-
+          float portion = SCHEDULE_GET_DATA(cat_feeder_schedule, "portion");
+          uint8_t grams = isnan(portion) ? 50 : (uint8_t)portion;
+          return grams * 100;  // milliseconds
+      
+      - switch.turn_off: feeder_motor
+      
+      - logger.log: "Feeding complete"
+      
+      # Optional: Send notification to Home Assistant
+      - homeassistant.service:
+          service: notify.mobile_app
+          data:
+            title: "Cat Feeder"
+            message: !lambda |-
+              float portion = SCHEDULE_GET_DATA(cat_feeder_schedule, "portion");
+              uint8_t grams = isnan(portion) ? 50 : (uint8_t)portion;
+              char msg[64];
+              snprintf(msg, sizeof(msg), "Fed cat %dg at scheduled time", grams);
+              return std::string(msg);
 
-cover:
+# Feeder motor control
+switch:
+  - platform: gpio
+    id: feeder_motor
+    pin: GPIO14
+    name: "Feeder Motor"
+    internal: true  # Hide from HA UI
+
+# Optional: Manual feed button
+button:
   - platform: template
-    id: living_room_blinds
-    name: "Living Room Blinds"
-    
-    open_action:
-      - logger.log: "Blinds opening"
-    
-    close_action:
-      - logger.log: "Blinds closing"
+    name: "Manual Feed (50g)"
+    on_press:
+      - switch.turn_on: feeder_motor
+      - delay: 5s  # 50g = 5 seconds
+      - switch.turn_off: feeder_motor
+      - logger.log: "Manual feeding complete"
 ```
+
+**Home Assistant Schedule Configuration:**
+
+```yaml
+schedule:
+  cat_feeding:
+    name: "Cat Feeding Times"
+    monday:
+      - from: "07:00:00"
+        to: "07:00:01"
+        data:
+          portion: 60  # 60 grams in the morning
+      - from: "18:00:00"
+        to: "18:00:01"
+        data:
+          portion: 80  # 80 grams in the evening
+    tuesday:
+      - from: "07:00:00"
+        to: "07:00:01"
+        data:
+          portion: 60
+      - from: "18:00:00"
+        to: "18:00:01"
+        data:
+          portion: 80
+    # ... continue for remaining days
+```
+
+**Features:**
+- Automatic feeding at scheduled times
+- Variable portion sizes per feeding
+- Manual feed button for unscheduled feeding
+- Mobile notifications when feeding occurs
+- Can be disabled via mode selector (useful when on vacation)
+- Portion size stored in schedule data (60-80g typical cat portions)
 
 ### Complex Example: Position-Controlled Blinds
 
@@ -867,7 +982,7 @@ cover:
 
 ## Home Assistant Schedules
 
-The Schedule component syncs with Home Assistant schedule helpers. This section explains how to create and configure HA schedules with additional data fields.
+The Schedule component syncs with [Home Assistant schedule helpers](https://www.home-assistant.io/integrations/schedule/). This section explains how to create and configure HA schedules with additional data fields.
 
 ### Creating a Schedule Helper
 
@@ -965,6 +1080,8 @@ schedule:
 ### Additional Data Fields
 
 Additional data fields allow you to store custom values with each schedule entry. These are accessed via data sensors in ESPHome.
+
+**Important:** Data sensor IDs are auto-generated if not specified. However, if you need to access the sensor values in lambdas or other code (e.g., using `SCHEDULE_GET_DATA`), you **must explicitly provide an `id`** for each data sensor.
 
 #### Data Field Types
 
@@ -1261,6 +1378,22 @@ Choose the right platform for storage efficiency:
 - Overhead: 4 bytes (entry count + terminator)
 - **Example:** 21 entries = (21 × 2) + 4 = **46 bytes** (**47% savings!**)
 
+**NVS Space Management:**
+
+The `max_schedule_entries` setting pre-allocates NVS space. To calculate total NVS usage:
+
+```
+State-Based: (max_schedule_entries × 4) + 4 bytes per schedule
+Event-Based: (max_schedule_entries × 2) + 4 bytes per schedule
+```
+
+**Example - Multiple Schedules:**
+- 3 switches with max_schedule_entries=21: 3 × 88 = **264 bytes**
+- 2 buttons with max_schedule_entries=21: 2 × 46 = **92 bytes**
+- **Total NVS:** 356 bytes
+
+**⚠️ Best Practice:** Only allocate what you need. Setting max_schedule_entries=100 "just in case" wastes valuable NVS space. If you later need to reduce it, a factory reset will be required to reclaim the space.
+
 ### Performance Characteristics
 
 - **Setup Time:** ~100-200ms per component
@@ -1287,7 +1420,7 @@ Notifications include:
 
 ### Backup and Restore
 
-Schedules are stored in NVS flash and persist across:
+Schedules are stored in ESP32 NVS (Non-Volatile Storage) flash and persist across:
 - Reboots
 - Power cycles
 - Firmware updates (if NVS partition preserved)
@@ -1298,6 +1431,17 @@ Schedules are stored in NVS flash and persist across:
 **To restore:**
 - Press update button after restoring HA
 - Or wait for automatic sync on next update
+
+**Factory Reset (NVS Recovery):**
+
+If you've over-provisioned `max_schedule_entries` during development, you can reclaim NVS space:
+
+1. Reduce `max_schedule_entries` in your YAML to actual needs
+2. Perform a factory reset (clears all NVS data)
+3. Recompile and upload firmware
+4. Re-download schedules from Home Assistant
+
+This is useful when transitioning from development (with large safety margins) to production (optimized storage).
 
 ---
 

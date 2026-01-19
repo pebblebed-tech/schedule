@@ -151,6 +151,7 @@ async def to_code(config):
     mode_select_conf = config[CONF_MODE_SELECT]
     mode_select_var = await select.new_select(mode_select_conf, options=SCHEDULE_MODE_OPTIONS)
     await cg.register_component(mode_select_var, mode_select_conf)
+    cg.add(mode_select_var.set_schedule(var))
     cg.add(var.set_mode_select(mode_select_var))
     
     # Set time component

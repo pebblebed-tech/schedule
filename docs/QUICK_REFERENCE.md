@@ -131,8 +131,11 @@ switch:
 
 ### Data Item Options
 
+**Note:** While `id` is auto-generated if not specified, you **must provide an explicit `id`** if you need to access the datasensor values in lambdas or C++ code (e.g., using `SCHEDULE_GET_DATA` macro).
+
 | Option | Type | Required | Default | Description |
 |--------|------|----------|---------|-------------|
+| `id` | ID | No* | auto | Datasensor ID (*required if accessing values in code) |
 | `label` | string | Yes | - | Data field name in HA schedule |
 | `item_type` | enum | Yes | - | `uint8_t`, `uint16_t`, `int32_t`, `float` |
 
@@ -193,7 +196,7 @@ select.set:
 lambda: |-
   float temp = SCHEDULE_GET_DATA(heating_schedule, "temperature");
   if (!isnan(temp)) {
-    ESP_LOGI("heating", "Target: %.1fÂC", temp);
+    ESP_LOGI("heating", "Target: %.1fï¿½C", temp);
   }
 ```
 

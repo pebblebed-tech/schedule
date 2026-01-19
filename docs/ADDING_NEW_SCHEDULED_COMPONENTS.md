@@ -77,6 +77,7 @@ class ScheduleClimate : public climate::Climate, public StateBasedSchedulable {
       call.set_mode(climate::CLIMATE_MODE_HEAT);
       
       // Get temperature from data sensor
+      // NOTE: To access datasensor values, you MUST specify an 'id' in your YAML config
       float temperature = 20.0f;  // Default temperature
       for (auto *sensor : this->data_sensors_) {
         if (sensor->get_label() == "temperature") {
@@ -418,6 +419,7 @@ class ScheduleCover : public cover::Cover, public EventBasedSchedulable {
     ESP_LOGD("schedule.cover", "Scheduled cover event triggered");
     
     // Get position from data sensor if available
+    // NOTE: To access datasensor values, you MUST specify an 'id' in your YAML config
     float position = 0.5f;  // Default to 50%
     for (auto *sensor : this->data_sensors_) {
       if (sensor->get_label() == "position") {
@@ -737,7 +739,11 @@ Event-based multiplier = 1
 ## Common Patterns
 
 ### Accessing Data Sensors in C++
+
+**Important:** To access datasensor values in C++ code, you must specify an `id` for each datasensor in your YAML configuration.
+
 ```cpp
+// In C++ code (apply_scheduled_state, etc.)
 for (auto *sensor : this->data_sensors_) {
   if (sensor->get_label() == "temperature") {
     float temp = sensor->state;
@@ -745,6 +751,15 @@ for (auto *sensor : this->data_sensors_) {
     break;
   }
 }
+```
+
+**YAML Configuration:**
+```yaml
+# You MUST specify an id if you need to access the value in code
+scheduled_data_items:
+  - id: heating_temp      # ID is required for value access
+    label: "temperature"
+    item_type: float
 ```
 
 ### Error Handling in apply_scheduled_state

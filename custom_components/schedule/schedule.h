@@ -168,6 +168,11 @@ class Schedule : public Component  {
     }
   }
   
+  // Send notification to Home Assistant
+  void send_notification(const std::string &message, const std::string &title) {
+    this->send_ha_notification_(message, title);
+  }
+  
   //============================================================================
   // PLATFORM-SPECIFIC METHODS (to be implemented by derived classes)
   //============================================================================

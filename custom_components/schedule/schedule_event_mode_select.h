@@ -43,40 +43,65 @@ class ScheduleEventModeSelect : public select::Select, public Component {
     }
   }
   
+
   // Set disabled-only mode (schedule is empty)
   void set_disabled_only_mode(bool disabled_only) {
+    this->schedule_is_empty_ = disabled_only;
+    
+    // Don't dynamically change traits - keep both options available
+    // Just switch to appropriate state based on schedule status
+    
+    std::string current = this->has_state() ? this->current_option() : "";
+    std::string new_state;
+    
     if (disabled_only) {
-      // Only allow disabled mode
-      this->traits.set_options({"Disabled"});
+      // Schedule is empty, force to Disabled
+      new_state = "Disabled";
     } else {
-      // Allow both modes
-      this->traits.set_options({"Disabled", "Enabled"});
-    }
-    
-    // If current mode is not in new options, switch to Disabled
-    const auto &options = this->traits.get_options();
-    std::string current = this->current_option();
-    bool found = false;
-    for (const auto &opt : options) {
-      if (opt == current) {
-        found = true;
-        break;
+      // Schedule has entries
+      if (current == "Disabled" || current.empty()) {
+        // Auto-enable when schedule becomes available
+        new_state = "Enabled";
+      } else {
+        // Keep current selection if valid
+        new_state = current;
       }
     }
     
-    if (!found) {
-      this->publish_state("Disabled");
-      if (this->on_value_callback_) {
-        this->on_value_callback_("Disabled");
-      }
-    } else {
-      // Re-publish current state to notify HA of trait changes
-      this->publish_state(current);
+    // Publish the state
+    this->publish_state(new_state);
+    
+    if (this->on_value_callback_) {
+      this->on_value_callback_(new_state);
     }
   }
   
  protected:
   void control(const std::string &value) override {
+    // Check if user is trying to enable when schedule is empty
+    if (this->schedule_is_empty_ && value == "Enabled") {
+      ESP_LOGW("schedule.mode_select", "Cannot enable: schedule is empty");
+      
+      // Publish the rejected value first, then the correct value
+      // This forces HA to see a state change
+      this->publish_state("Enabled");
+
+      
+      // Send notification to Home Assistant
+      if (this->schedule_ != nullptr) {
+        this->schedule_->send_notification("Cannot enable schedule mode", "Schedule is empty - no events to trigger");
+      }
+      
+      // Trigger callback with Disabled to ensure internal consistency
+      if (this->on_value_callback_) {
+        this->on_value_callback_("Disabled");
+      }
+      this->publish_state("Disabled");
+      
+      return;
+            
+    }
+    
     // Save the selected option index
     const auto &options = this->traits.get_options();
     for (uint8_t i = 0; i < options.size(); i++) {
@@ -98,6 +123,7 @@ class ScheduleEventModeSelect : public select::Select, public Component {
   Schedule *schedule_{nullptr};
   ESPPreferenceObject pref_;
   std::function<void(const std::string&)> on_value_callback_;
+  bool schedule_is_empty_{true};
 };
 
 } // namespace schedule
