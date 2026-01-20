@@ -1,0 +1,226 @@
+# Example: Multi-Zone Heating with Schedule Component
+# This example demonstrates multiple scheduled switches controlling different heating zones
+
+substitutions:
+  device_name: multizone-heating
+  friendly_name: Multi-Zone Heating
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+ 
+ # name_add_mac_suffix: true
+  project:
+    name: hblinds.zone-controller
+    version: 1.0.0
+  on_boot:
+    then:
+      # read the RTC time once when the system boots
+      ds1307.read_time:
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+  homeassistant_services: True
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # Enable fallback hotspot
+  ap:
+    ssid: "${device_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true    
+  id: bus_1
+time:
+  - platform: ds1307
+    id: rtc_time
+    # repeated synchronization is not necessary unless the external RTC
+    # is much more accurate than the internal clock
+    update_interval: never
+  - platform: homeassistant
+    # instead try to synchronize via network repeatedly ...
+    on_time_sync:
+      then:
+        # ... and update the RTC when the synchronization was successful
+        ds1307.write_time:
+
+# Schedule component
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [schedule]
+
+# Get temperatures from Home Assistant
+sensor:
+  - platform: homeassistant
+    id: living_room_temp
+    entity_id: sensor.living_room_temperature
+    
+  - platform: homeassistant
+    id: bedroom_temp
+    entity_id: sensor.bedroom_temperature
+
+# Thermostat climate controls
+climate:
+  # Zone 1: Living Room
+  - platform: thermostat
+    id: living_room_thermostat
+    name: "Living Room Thermostat"
+    sensor: living_room_temp
+    
+    default_preset: Home
+    on_boot_restore_from: default_preset
+    
+    min_heating_off_time: 300s
+    min_heating_run_time: 300s
+    min_idle_time: 30s
+    
+    heat_action:
+      - switch.turn_on: living_room_valve
+    
+    idle_action:
+      - switch.turn_off: living_room_valve
+    
+    visual:
+      min_temperature: 10°C
+      max_temperature: 28°C
+      temperature_step: 0.5°C
+
+  # Zone 2: Bedroom
+  - platform: thermostat
+    id: bedroom_thermostat
+    name: "Bedroom Thermostat"
+    sensor: bedroom_temp
+    
+    default_preset: Home
+    on_boot_restore_from: default_preset
+    
+    min_heating_off_time: 300s
+    min_heating_run_time: 300s
+    min_idle_time: 30s
+    
+    heat_action:
+      - switch.turn_on: bedroom_valve
+    
+    idle_action:
+      - switch.turn_off: bedroom_valve
+    
+    visual:
+      min_temperature: 10°C
+      max_temperature: 28°C
+      temperature_step: 0.5°C
+
+switch:
+  # Zone 1: Living Room Schedule
+  - platform: schedule
+    id: living_room_schedule
+    name: "Living Room Schedule"
+    ha_schedule_entity_id: "schedule.living_room"
+    
+    schedule_update_button:
+      name: "Update Living Room Schedule"
+    
+    mode_selector:
+      name: "Living Room Mode"
+    
+    scheduled_data_items:
+      - id: living_room_target_temp
+        label: "temperature"
+        item_type: float
+        name: "Living Room Target Temperature"
+        off_behavior: OFF_VALUE
+        off_value: 15.0
+        manual_behavior: MANUAL_VALUE
+        manual_value: 21.0
+    
+    on_turn_on:
+      - lambda: |-
+          auto target = SCHEDULE_GET_DATA(living_room_schedule, "temperature");
+          if (!isnan(target)) {
+            auto call = id(living_room_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_HEAT);
+            call.set_target_temperature(target);
+            call.perform();
+            ESP_LOGI("zone", "Living room schedule ON - heating to %.1f°C", target);
+          }
+    
+    on_turn_off:
+      - lambda: |-
+          auto call = id(living_room_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          ESP_LOGI("zone", "Living room schedule OFF");
+
+  # Zone 2: Bedroom Schedule
+  - platform: schedule
+    id: bedroom_schedule
+    name: "Bedroom Schedule"
+    ha_schedule_entity_id: "schedule.bedroom"
+    
+    schedule_update_button:
+      name: "Update Bedroom Schedule"
+    
+    mode_selector:
+      name: "Bedroom Mode"
+    
+    scheduled_data_items:
+      - id: bedroom_target_temp
+        label: "temperature"
+        item_type: float
+        name: "Bedroom Target Temperature"
+        off_behavior: OFF_VALUE
+        off_value: 15.0
+        manual_behavior: MANUAL_VALUE
+        manual_value: 18.0
+    
+    on_turn_on:
+      - lambda: |-
+          auto target = SCHEDULE_GET_DATA(bedroom_schedule, "temperature");
+          if (!isnan(target)) {
+            auto call = id(bedroom_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_HEAT);
+            call.set_target_temperature(target);
+            call.perform();
+            ESP_LOGI("zone", "Bedroom schedule ON - heating to %.1f°C", target);
+          }
+    
+    on_turn_off:
+      - lambda: |-
+          auto call = id(bedroom_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          ESP_LOGI("zone", "Bedroom schedule OFF");
+
+  # Zone valve relays
+  - platform: gpio
+    id: living_room_valve
+    pin: GPIO5
+    internal: true
+    
+  - platform: gpio
+    id: bedroom_valve
+    pin: GPIO6
+    internal: true

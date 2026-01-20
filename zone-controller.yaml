@@ -178,6 +178,7 @@ switch:
       name: "Next Event2"
     mode_selector:
       name: "Schedule 2 Mode"
+      id: schedule_2_mode
     scheduled_data_items:
       - id: temp_sensor2
         label: "temp"
@@ -195,11 +196,17 @@ switch:
     pin: GPIO1
     id: relay1
     name: Relay 1
+    on_turn_on:
+      - lambda: 'auto call = id(schedule_2_mode).make_call(); 
+                 call.set_option("Manual On");
+                 call.perform();'
   - platform: gpio
     pin: GPIO2
     id: relay2
     on_turn_on:
-      - lambda: 'id(testschedule).create_schedule_preference();'
+      - lambda: 'auto call = id(schedule_2_mode).make_call(); 
+                 call.set_option("Manual Off");
+                 call.perform();'
     name: Relay 2
   - platform: gpio
     pin: GPIO41

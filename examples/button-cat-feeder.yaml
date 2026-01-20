@@ -1,0 +1,151 @@
+# Example: Automated Cat Feeder with Schedule Component
+# This example demonstrates event-based scheduling with a button platform
+
+substitutions:
+  device_name: cat-feeder
+  friendly_name: Cat Feeder
+
+eesphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+ 
+ # name_add_mac_suffix: true
+  project:
+    name: hblinds.zone-controller
+    version: 1.0.0
+  on_boot:
+    then:
+      # read the RTC time once when the system boots
+      ds1307.read_time:
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+  homeassistant_services: True
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # Enable fallback hotspot
+  ap:
+    ssid: "${device_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true    
+  id: bus_1
+time:
+  - platform: ds1307
+    id: rtc_time
+    # repeated synchronization is not necessary unless the external RTC
+    # is much more accurate than the internal clock
+    update_interval: never
+  - platform: homeassistant
+    # instead try to synchronize via network repeatedly ...
+    on_time_sync:
+      then:
+        # ... and update the RTC when the synchronization was successful
+        ds1307.write_time:
+
+# Schedule component
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [schedule]
+
+button:
+  # Scheduled feeding button
+  - platform: schedule
+    id: cat_feeder_schedule
+    name: "Cat Feeder Schedule"
+    ha_schedule_entity_id: "schedule.cat_feeding"
+    max_schedule_entries: 10
+    
+    schedule_update_button:
+      name: "Update Feeding Schedule"
+    
+    mode_selector:
+      name: "Feeder Mode"
+    
+    current_event_sensor:
+      name: "Current Feeding Event"
+    
+    next_event_sensor:
+      name: "Next Feeding Event"
+    
+    scheduled_data_items:
+      - id: portion_size
+        label: "portion"
+        item_type: uint8_t  # Portion size in grams (0-255)
+    
+    on_press:
+      - lambda: |-
+          // Get portion size from schedule (default to 50g if not specified)
+          float portion = SCHEDULE_GET_DATA(cat_feeder_schedule, "portion");
+          uint8_t grams = isnan(portion) ? 50 : (uint8_t)portion;
+          
+          ESP_LOGI("cat_feeder", "Dispensing %d grams of food", grams);
+          
+          // Calculate motor run time (assuming 10g per second)
+          uint32_t run_time_ms = grams * 100;
+          
+          // Run feeder motor
+          id(feeder_motor).turn_on();
+      
+      - delay: !lambda |-
+          float portion = SCHEDULE_GET_DATA(cat_feeder_schedule, "portion");
+          uint8_t grams = isnan(portion) ? 50 : (uint8_t)portion;
+          return grams * 100;  // milliseconds
+      
+      - switch.turn_off: feeder_motor
+      
+      - logger.log: "Feeding complete"
+      
+      # Optional: Send notification to Home Assistant
+      - homeassistant.service:
+          service: notify.mobile_app
+          data:
+            title: "Cat Feeder"
+            message: !lambda |-
+              float portion = SCHEDULE_GET_DATA(cat_feeder_schedule, "portion");
+              uint8_t grams = isnan(portion) ? 50 : (uint8_t)portion;
+              char msg[64];
+              snprintf(msg, sizeof(msg), "Fed cat %dg at scheduled time", grams);
+              return std::string(msg);
+
+  # Optional: Manual feed button
+  - platform: template
+    name: "Manual Feed (50g)"
+    on_press:
+      - switch.turn_on: feeder_motor
+      - delay: 5s  # 50g = 5 seconds
+      - switch.turn_off: feeder_motor
+      - logger.log: "Manual feeding complete"
+
+# Feeder motor control
+switch:
+  - platform: gpio
+    id: feeder_motor
+    pin: GPIO14
+    name: "Feeder Motor"
+    internal: true  # Hide from HA UI

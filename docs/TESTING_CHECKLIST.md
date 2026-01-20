@@ -353,6 +353,7 @@ Before releasing:
 - [ ] All critical tests pass
 - [ ] All known bugs are fixed
 - [ ] Documentation is complete
+- [ ] Example in documentation are tested to work
 - [ ] Examples are tested and working
 - [ ] Code is formatted (clang-format)
 - [ ] Logging conforms to ESPHome best practices

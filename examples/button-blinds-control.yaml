@@ -1,0 +1,144 @@
+# Example: Position-Controlled Blinds with Schedule Component
+# This example demonstrates event-based scheduling for automated blinds with position control
+
+substitutions:
+  device_name: blinds-controller
+  friendly_name: Blinds Controller
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+ 
+ # name_add_mac_suffix: true
+  project:
+    name: hblinds.zone-controller
+    version: 1.0.0
+  on_boot:
+    then:
+      # read the RTC time once when the system boots
+      ds1307.read_time:
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+  homeassistant_services: True
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # Enable fallback hotspot
+  ap:
+    ssid: "${device_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true    
+  id: bus_1
+time:
+  - platform: ds1307
+    id: rtc_time
+    # repeated synchronization is not necessary unless the external RTC
+    # is much more accurate than the internal clock
+    update_interval: never
+  - platform: homeassistant
+    # instead try to synchronize via network repeatedly ...
+    on_time_sync:
+      then:
+        # ... and update the RTC when the synchronization was successful
+        ds1307.write_time:
+
+# Schedule component
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [schedule]
+
+button:
+  - platform: schedule
+    id: blinds_schedule
+    name: "Blinds Schedule"
+    ha_schedule_entity_id: "schedule.blinds"
+    max_schedule_entries: 10
+    
+    schedule_update_button:
+      name: "Update Blinds Schedule"
+    
+    mode_selector:
+      name: "Blinds Mode"
+    
+    current_event_sensor:
+      name: "Current Blinds Event"
+    
+    next_event_sensor:
+      name: "Next Blinds Event"
+    
+    scheduled_data_items:
+      - id: blinds_position
+        label: "position"
+        item_type: float
+    
+    on_press:
+      - lambda: |-
+          float position = SCHEDULE_GET_DATA(blinds_schedule, "position");
+          
+          if (!isnan(position)) {
+            ESP_LOGI("blinds", "Setting position to %.0f%%", position);
+            
+            auto call = id(living_room_blinds).make_call();
+            call.set_position(position / 100.0);
+            call.perform();
+          } else {
+            ESP_LOGW("blinds", "No position data, opening fully");
+            id(living_room_blinds).open();
+          }
+
+cover:
+  - platform: template
+    id: living_room_blinds
+    name: "Living Room Blinds"
+    has_position: true
+    
+    open_action:
+      - logger.log: "Opening blinds to 100%"
+      - script.execute: move_blinds_script
+    
+    close_action:
+      - logger.log: "Closing blinds to 0%"
+      - script.execute: move_blinds_script
+    
+    position_action:
+      - logger.log: "Setting custom position"
+      - script.execute: move_blinds_script
+    
+    stop_action:
+      - logger.log: "Stopping blinds"
+
+script:
+  - id: move_blinds_script
+    then:
+      - logger.log: "Moving blinds to target position"
+      # Add your actual motor control logic here
+      # For example:
+      # - switch.turn_on: motor_forward
+      # - delay: !lambda "return id(living_room_blinds).position * 30000;"  # 30 seconds max
+      # - switch.turn_off: motor_forward

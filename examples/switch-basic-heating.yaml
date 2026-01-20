@@ -1,0 +1,100 @@
+# Example: Basic Heating Control with Schedule Component
+# This example demonstrates a simple scheduled switch controlling a heating relay
+
+substitutions:
+  device_name: heating-controller
+  friendly_name: Heating Controller
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+ 
+ # name_add_mac_suffix: true
+  project:
+    name: hblinds.zone-controller
+    version: 1.0.0
+  on_boot:
+    then:
+      # read the RTC time once when the system boots
+      ds1307.read_time:
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+  homeassistant_services: True
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # Enable fallback hotspot
+  ap:
+    ssid: "${device_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true    
+  id: bus_1
+time:
+  - platform: ds1307
+    id: rtc_time
+    # repeated synchronization is not necessary unless the external RTC
+    # is much more accurate than the internal clock
+    update_interval: never
+  - platform: homeassistant
+    # instead try to synchronize via network repeatedly ...
+    on_time_sync:
+      then:
+        # ... and update the RTC when the synchronization was successful
+        ds1307.write_time:
+
+# Schedule component
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [schedule]
+
+switch:
+  - platform: schedule
+    id: heating_schedule
+    name: "Heating Schedule"
+    ha_schedule_entity_id: "schedule.heating"
+    
+    schedule_update_button:
+      name: "Update Heating Schedule"
+    
+    mode_selector:
+      name: "Heating Mode"
+    
+    indicator:
+      name: "Heating Indicator"
+    
+    on_turn_on:
+      - switch.turn_on: heater_relay
+    
+    on_turn_off:
+      - switch.turn_off: heater_relay
+
+  - platform: gpio
+    id: heater_relay
+    pin: GPIO5
+    name: "Heater Relay"

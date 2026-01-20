@@ -6,6 +6,7 @@ This directory contains documentation and reference files for the ESPHome Schedu
 
 ### Getting Started
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Quick reference for common tasks and YAML configuration
+- **[EXAMPLES.md](EXAMPLES.md)** - Detailed configuration examples for Switch and Button platforms
 - **[ADDING_NEW_PLATFORMS.md](ADDING_NEW_PLATFORMS.md)** - Detailed guide for adding new state-based or event-based components
 
 ### Architecture & Design

@@ -79,10 +79,7 @@ class ScheduleStateModeSelect : public select::Select, public Component {
     // Check if user is trying to select a schedule-dependent mode when schedule is empty
     if (this->schedule_is_empty_ && (value == "Auto" || value == "Early Off" || value == "Boost On")) {
       ESP_LOGW("schedule.mode_select", "Cannot select '%s': schedule is empty", value.c_str());
-      
-      // Get current state
-      std::string current = this->has_state() ? this->current_option() : "Manual Off";
-      
+   
       // Publish the rejected value first, then the correct value
       // This forces HA to see a state change
       this->publish_state(value);
@@ -98,10 +95,10 @@ class ScheduleStateModeSelect : public select::Select, public Component {
       
       // Trigger callback with current state to ensure internal consistency
       if (this->on_value_callback_) {
-        this->on_value_callback_(current);
+        this->on_value_callback_("Manual Off");
       }
-      this->publish_state(current);
-      
+      // this->publish_state(current);
+      this->publish_state("Manual Off");
       return;
     }
     
