@@ -27,7 +27,9 @@ external_components:
 #  - source:
 #      type: local
 #      path: custom_components
-  - source: github://pebblebed-tech/schedule
+  - source:
+      type: git
+      url: https://github.com/pebblebed-tech/schedule
     components: [ schedule ]
 
 # Enable logging

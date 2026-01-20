@@ -14,7 +14,7 @@ static const char *TAG = "schedule";
 
 // TODO: Add handling for empty schedule on update from HA in respect to a valid schedule empty, Mode select and switch state
 
-
+// TODO: Improve notifcation msg to inc which schedule entity ID is empty
 // TODO: Ensure schedule_retrieval_service_ is only setup once
 
 // Test cases
