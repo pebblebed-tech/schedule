@@ -6,8 +6,8 @@ This folder contains complete, ready-to-use YAML configuration examples for the 
 
 Before using these examples, make sure you have:
 
-1. **ESPHome** installed (2024.6.0 or later)
-2. **Home Assistant** with schedule helper integration (2024.6.0 or later)
+1. **ESPHome** installed (2025.11.1 or later)
+2. **Home Assistant** with schedule helper integration (2025.11.3 or later)
 3. **ESP32 device** (these examples use ESP32, but can be adapted for other boards)
 4. **RTC Module** (DS1307 or DS3231 recommended for offline operation)
 5. **Schedule component** copied to `custom_components/schedule` directory
@@ -193,16 +193,6 @@ schedule:
 
 ## Customization Tips
 
-### Changing GPIO Pins
-
-Update the `pin:` values in switch/output/light sections:
-
-```yaml
-switch:
-  - platform: gpio
-    pin: GPIO5  # Change to your pin
-```
-
 ### Adjusting Schedule Capacity
 
 Modify `max_schedule_entries` based on your needs:
@@ -225,15 +215,6 @@ scheduled_data_items:
   - id: humidity
     label: "humidity"
     item_type: uint8_t
-```
-
-### Changing Board Type
-
-Replace `esp32dev` with your board:
-
-```yaml
-esp32:
-  board: esp32-s3-devkitc-1  # or your board type
 ```
 
 ## Troubleshooting
