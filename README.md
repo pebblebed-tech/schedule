@@ -762,54 +762,6 @@ sensor:
     accuracy_decimals: 1
 ```
 
-### Editing Schedules in Home Assistant
-
-#### Using Schedule Card
-
-Add to your Lovelace dashboard:
-
-```yaml
-type: schedule-card
-entity: schedule.heating
-```
-
-Features:
-- Visual time slot editor
-- Drag to resize time slots
-- Click to add/remove slots
-- Copy slots between days
-
-#### Adding Data Fields in UI
-
-1. Click on a time slot in the schedule card
-2. Click **"Add data field"**
-3. Enter field name (must match ESPHome `label`)
-4. Enter value
-5. Click **Save**
-
-#### Programmatic Updates
-
-Use Home Assistant automations to modify schedules:
-
-```yaml
-automation:
-  - alias: "Update heating schedule for winter"
-    trigger:
-      - platform: state
-        entity_id: input_select.season
-        to: "Winter"
-    action:
-      - service: schedule.add
-        target:
-          entity_id: schedule.heating
-        data:
-          day: monday
-          from: "06:00:00"
-          to: "08:00:00"
-          data:
-            temperature: 22.0
-```
-
 ### Troubleshooting
 
 #### Schedule Not Syncing
